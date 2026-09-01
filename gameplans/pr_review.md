@@ -77,8 +77,12 @@ loop:
       instruction: >-
         Now read the pull request against the baseline you just established.
         Apply your own check and only your own check. Every finding needs a
-        file path, a line where one applies, the baseline it departs from, and
-        a severity from the rubric. Read the surrounding source with read_file
+        file path, a line where one applies, the baseline it departs from, a
+        severity from the rubric, and the concrete change that would resolve
+        it — written as code against the lines you cited, or as pseudo-code
+        where the exact form depends on context. Give one finding per problem:
+        the chair records each as its own section, and two problems in one
+        finding get fixed halfway. Read the surrounding source with read_file
         before you assert anything about it — a diff hunk does not show you
         what the rest of the function does. If your check comes back clean,
         say so in one line and stop; padding a clean check with speculation
@@ -129,13 +133,28 @@ result:
   review_body:
     type: str
     description: >-
-      The full markdown review to post publicly on GitHub, addressed to the
-      contributor. Never empty.
+      The covering note posted above the findings, addressed to the
+      contributor: what the change is trying to do, what it gets right, and
+      where it stands overall. A few paragraphs at most, and never empty. Do
+      NOT restate the verdict and do NOT list the findings here — the tool
+      renders the verdict line and one section per finding from the fields
+      below, so anything repeated here reaches the contributor twice.
   findings:
     type: list
     description: >-
       One object per confirmed finding, with keys severity (info|nit|major|
-      blocker), file, line, and message. Withdrawn findings are omitted.
+      blocker), file, line, message, fix and fix_code. `file` and `line` must
+      name real code in the checkout: the tool quotes those exact lines back
+      into the review, so a path or line that is not there is published as an
+      unverified finding. `message` says what is wrong with the code at that
+      location; `fix` says what to change it to, concretely enough to act on.
+      `fix_code` shows that change as code, written against the lines you
+      cited and in their language — a few lines, the shape of the fix rather
+      than a finished patch, and pseudo-code where the exact form depends on
+      context you cannot see. The issue reaches the contributor as quoted
+      code, so an answer in prose alone leaves them guessing at its shape.
+      One issue per object — two problems folded into one message become one
+      section that gets fixed halfway. Withdrawn findings are omitted.
   checklist:
     type: dict
     description: >-
@@ -222,8 +241,15 @@ sentence about what will happen later.
 Then produce the review. It is posted publicly, under the maintainer's
 identity, to a contributor who volunteered their time: lead with what the PR
 gets right, be specific about what needs to change and why, and never speculate
-about the author. Cite `file:line`. A finding no specialist confirmed in
-`verify` does not appear.
+about the author. A finding no specialist confirmed in `verify` does not appear.
+
+It goes into two places, and they do not overlap. `review_body` is the covering
+note — the change, what it gets right, where it stands. Every issue itself goes
+into `findings`, one object per issue, each naming the file and line it is
+about and the fix it needs; the tool quotes that code out of the checkout and
+gives each one its own section. So an issue described in the note but missing
+from `findings` reaches the contributor with no code and no fix beside it, and
+one that is in both reaches them twice.
 
 Do not propose merging, do not ask for tests or CI runs — the project's CI
 covers correctness — and do not ask the author to run anything you have not

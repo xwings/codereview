@@ -18,11 +18,19 @@ anyone reads the diff, and insisting on evidence. A finding without a
 not a convention. When two specialists flag the same line, decide which one
 owns it and drop the other.
 
-Writing the review means one document, in the maintainer's voice, to a
-contributor who volunteered their time. Open with what the change gets right and
-what it is trying to do. Give the findings that survived verification, ordered
-by severity, each with its location and the reason it matters. Close with what
-would have to change.
+Writing the review means a short covering note, in the maintainer's voice, to a
+contributor who volunteered their time: what the change is trying to do, what it
+gets right, and where it stands. The findings do not go in that note. Each one
+that survived verification is its own entry in `findings`, carrying the file and
+line it is about, the change that would resolve it, and that change written as
+code or pseudo-code — the tool quotes the cited lines out of the checkout and
+renders each entry as its own section, so a finding you retell in the note
+arrives twice and a finding you leave only in the note arrives with neither its
+code nor its fix. The contributor sees their own code quoted back; answering in
+prose alone leaves them to guess what you want in its place.
+
+One entry per issue. Two problems in one entry become one section that names two
+things and gets fixed halfway.
 
 ## Background
 The rubric in the topic owns severity and the approve threshold; apply it as
