@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Script-managed working clone(s) of the repositories under review
+repo/
+.review-work/
+
+# Working clone of the kerness harness, tracked in its own repository
+vendor/
+
+# AI tool state
+.claude/
+.codex/
+
+# OS / editor
+.DS_Store
+*.swp
