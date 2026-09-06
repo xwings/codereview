@@ -1,7 +1,7 @@
 """Documentation preflight, preservation, and filesystem boundary regressions."""
 
+import hashlib
 import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -459,34 +459,61 @@ class ArchitectureTests(unittest.TestCase):
 
     def test_sync_fetches_head_every_time_and_refuses_stale_or_unknown_rules(self):
         cache = self.clone / "eatmycode"
-        cache.mkdir()
-        source = (Path(__file__).parent / "fixtures/eatmycode-1.1.0.md").read_text()
-        (cache / "SKILL.md").write_text(source)
+        upstream = self.clone / "upstream"
+        upstream.mkdir()
+        git_io.git("init", cwd=upstream, isolated=True)
+        header = "---\nmetadata:\n  version: 9.8.7\n---\n\n"
+        footer = "## Output Contract\n\nSynthetic test contract.\n"
+        source = header + "".join(self.skill.shared_sections.values()) + footer
+        normalized = header + "".join(
+            f"## {name}\n[shared section]\n" for name in self.skill.shared_sections
+        ) + footer
 
-        def git(*args, **kwargs):
-            output = {("remote", "get-url", "origin"): architecture.UPSTREAM,
-                      ("rev-parse", "FETCH_HEAD"): "4db1227003a118c7d80cf5e7e0a402d37ded0b67"}.get(args, "")
-            return subprocess.CompletedProcess(args, 0, output, "")
+        def commit(content):
+            (upstream / "SKILL.md").write_text(content)
+            git_io.git("add", "SKILL.md", cwd=upstream, isolated=True)
+            git_io.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                       "commit", "-m", "Update test rules", cwd=upstream, isolated=True)
+            return git_io.git("rev-parse", "HEAD", cwd=upstream, isolated=True).stdout.strip()
 
-        with patch.object(git_io, "git", side_effect=git) as calls:
+        revision = commit(source)
+        with patch.object(architecture, "UPSTREAM", upstream.as_uri()), \
+                patch.object(architecture, "SUPPORTED_CONTRACT", hashlib.sha256(normalized.encode()).hexdigest()), \
+                patch.object(git_io, "git", wraps=git_io.git) as calls:
             skill = architecture.sync_skill(cache)
-            self.assertEqual(skill.revision, "4db1227003a118c7d80cf5e7e0a402d37ded0b67")
-            self.assertEqual(skill.version, "1.1.0")
-            self.assertEqual(skill.shared_sections, {
-                name: architecture._section(source, name) for name in architecture.SHARED_HEADERS
-            })
+            self.assertEqual(skill.revision, revision)
+            self.assertEqual(skill.version, "9.8.7")
+            self.assertEqual(skill.text, source)
+            self.assertEqual(skill.shared_sections, self.skill.shared_sections)
             changed_shared = source.replace("## Review Checks\n", "## Review Checks\n\nA new shared rule.\n", 1)
-            (cache / "SKILL.md").write_text(changed_shared)
-            self.assertIn("A new shared rule.", architecture.sync_skill(cache).shared_sections["Review Checks"])
+            updated_revision = commit(changed_shared)
+            updated = architecture.sync_skill(cache)
+            self.assertNotEqual(updated.revision, skill.revision)
+            self.assertEqual(updated.revision, updated_revision)
+            self.assertEqual(updated.text, changed_shared)
+            self.assertIn("A new shared rule.", updated.shared_sections["Review Checks"])
+            self.assertEqual(architecture.sync_skill(cache), updated)
             self.assertEqual(sum(call.args == ("fetch", "--no-tags", "origin", "HEAD")
-                                 for call in calls.call_args_list), 2)
-        (cache / "SKILL.md").write_text(source + "\nNew unsupported contract.\n")
-        with patch.object(git_io, "git", side_effect=git), self.assertRaises(architecture.ArchitectureError):
-            architecture.sync_skill(cache)
-        with patch.object(git_io, "git", side_effect=git):
-            with patch.object(git_io, "assert_clone_clean", side_effect=SystemExit("dirty")):
-                with self.assertRaises(SystemExit):
+                                 for call in calls.call_args_list), 3)
+
+            cached_skill = cache / "SKILL.md"
+            cached_skill.write_text(changed_shared + "\nLocal edit.\n")
+            with self.assertRaisesRegex(SystemExit, "uncommitted changes"):
+                architecture.sync_skill(cache)
+            cached_skill.write_text(changed_shared)
+
+            unavailable = self.clone / "unavailable"
+            upstream.rename(unavailable)
+            try:
+                with self.assertRaisesRegex(SystemExit, "fetch"):
                     architecture.sync_skill(cache)
+                self.assertEqual(cached_skill.read_text(), changed_shared)
+            finally:
+                unavailable.rename(upstream)
+
+            commit(changed_shared.replace("Synthetic test contract.", "Unsupported contract."))
+            with self.assertRaisesRegex(architecture.ArchitectureError, "changed its supported contract"):
+                architecture.sync_skill(cache)
 
 
 if __name__ == "__main__":

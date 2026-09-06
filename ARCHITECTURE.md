@@ -169,7 +169,7 @@ upstream checks in [harness](ARCHITECTURE/harness.md).
 
 | Change owner | Required verification and limits |
 | ------------ | -------------------------------- |
-| Architecture preflight | `tests/test_architecture.py`: refresh/version gates, current-doc reuse, full proposal validation, preservation and rollback |
+| Architecture preflight | `tests/test_architecture.py`: temporary upstream refresh/update/failure, version gates, current-doc reuse, full proposal validation, preservation and rollback; owning doc also gives the live upstream compatibility check |
 | CLI, Git/GitHub and profiles | `tests/test_workflow.py`, `tests/test_git_io.py`: required branch/routing, isolated local merges, source citations, body-file writes and no-write guards |
 | Panels and reporting | `tests/test_workflow.py`: real scripted session rounds, independent ballots/audits, strict completion, approval and rendering |
 | Documentation | Validate current source references, relative links, exact shared/root/module sections and matching verified version stamps |

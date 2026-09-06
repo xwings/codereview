@@ -137,19 +137,40 @@ python3 -m py_compile architecture.py
 ```
 
 Passing evidence is exit zero, an `OK` unittest summary, and no compiler
-diagnostics. `tests/test_architecture.py` owns refresh failures, supported
-upstream contract/freshness behavior, root-version reuse and stale-root fallback,
+diagnostics. The refresh test creates a temporary Git upstream with a minimal
+synthetic specification. It proves initial cloning, changed rules and revisions,
+fetching even without changes, and rejection of dirty caches, failed fetches and
+unsupported contracts. No upstream specification snapshot is bundled.
+`tests/test_architecture.py` also owns root-version reuse and stale-root fallback,
 invalid proposals, guidance preservation, module removals and rollback.
 `tests/test_workflow.py` owns reuse/audit progress and session delegation, real
 scripted panel participation and rejection. Generated target documentation may list test
 commands, but the review tool never executes them or certifies their success.
 
+Check compatibility with the actual latest upstream separately, with network
+access. This uses the runtime refresh path and a temporary cache:
+
+```sh
+.venv/bin/python - <<'PY'
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import architecture
+
+with TemporaryDirectory() as directory:
+    skill = architecture.sync_skill(Path(directory) / "eatmycode")
+    print(skill.version, skill.revision)
+PY
+```
+
+Expected: exit zero and the fetched version/revision. An unavailable or
+unsupported upstream stops the check; local test data cannot substitute for it.
+
 ## Review and Refactor Guide
 
 An upstream contract update requires inspecting the full current specification,
 `sync_skill`, `prepare`, `validate_documents`, gameplan and three personas;
-changing only the fingerprint is insufficient. Align fixtures with the actual
-contract and retain rejection coverage for unsupported changes. Version changes
+changing only the fingerprint is insufficient. Run the live compatibility check
+and retain rejection coverage for unsupported changes. Version changes
 must preserve newer documents and audit stale content before stamping.
 
 Migration changes require reviewing `_document_path`, `_archive`, `_apply` and
