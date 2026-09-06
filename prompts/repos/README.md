@@ -10,8 +10,7 @@ writes one here.
 repos/<owner>/<name>/
 ├── ARCHITECTURE.md     optional — a factual map of the project
 ├── design.md           optional — the maintainer's rubric
-├── coding_styles.md    optional — only if the project's languages differ
-└── profile.json        optional — {"base_branch": "..."}
+└── coding_styles.md    optional — only if the project's languages differ
 ```
 
 Every file is optional. Lookup falls through **profile → `../default/` →
@@ -22,8 +21,9 @@ backstops the rest. Creating a directory here needs no Python change.
 
 - **`ARCHITECTURE.md`** — layering, module ownership, the public API surface,
   the invariants a contributor is expected to know. These are supplementary
-  notes; the automatically audited guide and original source take precedence.
-  A profile never skips the mandatory documentation preflight.
+  notes; the prepared guide and selected or merged source take precedence.
+  Only the selected source's root version controls documentation preparation;
+  profile notes cannot bypass that gate.
 - **`design.md`** — what *this* maintainer considers a blocker. It must define
   the severity vocabulary and the approve threshold; `../default/design.md`
   is the template. `reporting.validate_pr` always enforces unanimous merge
@@ -31,9 +31,11 @@ backstops the rest. Creating a directory here needs no Python change.
 - **`coding_styles.md`** — only when the project's languages fall outside the
   four the shared file covers (Python, C, C++, Rust). Overriding it replaces
   the whole file, not one section.
-- **`profile.json`** — `base_branch` only, and only when the project's working
-  branch is not its GitHub default. A project developing on `dev` while its
-  `master` sits stale needs this or it is reviewed against the stale branch.
+
+Branch selection is required through `--branch`; profiles contain Markdown
+knowledge only. `--branch` replaces the former `--base-branch` option and JSON
+branch pins. For example, select `--branch dev` to review against development
+source even when the GitHub default is `main`.
 
 ## The rule every profile inherits
 

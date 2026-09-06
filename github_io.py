@@ -75,19 +75,6 @@ def ensure_gh_ready() -> None:
         )
 
 
-def fetch_default_branch(repo: str) -> str:
-    """The repo's default branch, for projects that pin no other base."""
-    res = gh("repo", "view", repo, "--json", "defaultBranchRef")
-    ref = (json.loads(res.stdout) or {}).get("defaultBranchRef") or {}
-    name = ref.get("name")
-    if not name:
-        raise SystemExit(
-            f"error: could not determine the default branch of {repo}. "
-            f"Pass --base-branch."
-        )
-    return str(name)
-
-
 def fetch_pr(repo: str, n: int) -> dict[str, Any]:
     fields = (
         "number,title,body,author,headRefOid,headRefName,baseRefName,"

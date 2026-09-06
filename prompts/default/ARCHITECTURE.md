@@ -30,4 +30,4 @@ itself a finding, and it limits what you may demand of this pull request: you
 cannot hold a contributor to a rule that nothing in the tree demonstrates.
 
 Optional curated notes belong in `prompts/repos/<owner>/<name>/ARCHITECTURE.md`.
-They supplement the audited guide and source; they do not replace preflight.
+They supplement the prepared guide and source; they do not replace preflight.

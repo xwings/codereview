@@ -9,6 +9,8 @@ from pathlib import Path
 
 import kerness
 
+from progress import activity
+
 PANELS = {
     "pr": (
         ("Style", "style_officer.md"),
@@ -75,12 +77,14 @@ class PanelChannel(kerness.Channel):
         if self.transcript:
             self.transcript.send(sender, message)
         if self.verbose:
-            print(f"\n[{TITLES.get(sender, sender)} · {sender}]\n{message}", file=sys.stderr)
-        elif sender in self.seats:
+            print(f"\n[{TITLES.get(sender, sender)} · {sender}]\n{message}", file=sys.stderr, flush=True)
+        if sender in self.seats:
             index = min(self.completed // len(self.seats), len(PHASES[self.kind]) - 1)
             phase = PHASES[self.kind][index].replace("_", " ")
+            total = len(self.seats) * len(PHASES[self.kind])
             print(
-                f"  [{phase}] {TITLES[sender]} completed",
+                f"  [{self.kind} · phase {index + 1}/{len(PHASES[self.kind])}: {phase}] "
+                f"{TITLES[sender]} completed · specialist turns {self.completed + 1}/{total}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -188,24 +192,38 @@ def run_session(session: kerness.Session, kind: str) -> PanelResult:
     """Use kerness's strict owned run API; never publish coerced default fields."""
     if kind not in PANELS:
         raise ValueError(f"Unknown panel kind: {kind}")
-    run = session.start(mode="automatic", result_validation="strict")
-    while True:
-        step = run.step()
-        if step["status"] == "progress":
-            continue
-        if step["status"] != "finished":
-            raise PanelError("The read-only panel unexpectedly requested external input.")
-        outcome = step["outcome"]
-        if outcome["reason"]["kind"] != "completed" or not outcome["diagnostics"]["valid"]:
-            reason = outcome["reason"]["kind"]
-            detail = outcome.get("error") or outcome.get("diagnostics")
-            raise PanelError(f"Panel ended with {reason}: {detail}")
-        raw = outcome["result"]
-        result = PanelResult(
-            fields=raw["fields"], history=raw["history"], summary=raw["final_summary"],
-            turns_completed=raw["turns_completed"], rounds_run=raw["rounds_run"],
-            phase_reached=raw["phase_reached"], end_reason=raw["end_reason"],
-            usage=outcome["usage"],
-        )
-        validate_panel(result, kind)
-        return result
+    label = {"pr": "PR review panel", "issue": "Issue investigation panel", "docs": "Documentation panel"}[kind]
+    with activity(f"{label} ({len(PHASES[kind])} phases, {len(PANELS[kind])} specialists)") as update:
+        def on_event(record: dict) -> None:
+            event = record["event"]
+            # Only host-known identities and operation types reach progress.
+            # Event payloads can contain source, tool arguments and model text.
+            if event["kind"] == "provider_started":
+                actor = TITLES.get(event["actor"], "Panel agent")
+                update(f"{label}: waiting for model response from {actor}")
+            elif event["kind"] == "tool_started":
+                actor = TITLES.get(event["identity"]["actor"], "Panel agent")
+                update(f"{label}: {actor} inspecting evidence")
+
+        run = session.start(mode="automatic", result_validation="strict", event_sink=on_event)
+        while True:
+            step = run.step()
+            if step["status"] == "progress":
+                continue
+            if step["status"] != "finished":
+                raise PanelError("The read-only panel unexpectedly requested external input.")
+            outcome = step["outcome"]
+            if outcome["reason"]["kind"] != "completed" or not outcome["diagnostics"]["valid"]:
+                reason = outcome["reason"]["kind"]
+                detail = outcome.get("error") or outcome.get("diagnostics")
+                raise PanelError(f"Panel ended with {reason}: {detail}")
+            raw = outcome["result"]
+            result = PanelResult(
+                fields=raw["fields"], history=raw["history"], summary=raw["final_summary"],
+                turns_completed=raw["turns_completed"], rounds_run=raw["rounds_run"],
+                phase_reached=raw["phase_reached"], end_reason=raw["end_reason"],
+                usage=outcome["usage"],
+            )
+            update(f"{label}: validating participation and final result")
+            validate_panel(result, kind)
+            return result

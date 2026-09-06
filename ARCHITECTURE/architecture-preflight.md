@@ -1,95 +1,172 @@
+---
+eatmycode_version: "1.1.0"
+---
 # Architecture preflight
 
 ## Goal
 
-Establish a current, source-backed architecture map before routing a GitHub
-item to PR review or issue triage. This is infrastructure for the review
-workflow: both panels receive the root control center, owning module paths,
-and instructions to inspect the relevant source before answering.
+Prepare current, source-backed architecture after item identification and
+selected-branch source preparation, including any local PR merge (M1).
+Own specification refresh, freshness checks, audited proposals, structural
+validation and local document migration. Panels supply source evidence; this
+owner never runs target commands, reviews a PR or publishes a report.
 
 ## Status
 
-`done` — latest-rule synchronization, document preparation, validation and
-migration pass the behavioral suite. Independent review and current-upstream
-structural validation pass. Target-project tests remain unexecuted; this
-preflight does not certify full eatmycode release compliance.
+`done` — refresh, current-document reuse, validation, preservation and rollback are implemented
+and covered by the offline behavioral suite. Current eatmycode integration
+supports stable version metadata, the ordered root contract and ten module
+sections. Source audits do not prove target tests passed or full eatmycode
+release compliance; no target commands run during preparation.
 
 ## Code Structure
 
 | File | Role |
 | ---- | ---- |
-| `architecture.py` | Upstream refresh, document proposals, structural checks, migration, and allowed writes |
-| `gameplans/architecture_docs.md` | Three phases and the strict documentation result contract |
-| `personas/docs_planner.md` | Principal architect responsible for subsystem ownership and planning |
-| `personas/docs_writer.md` | Senior engineer and technical writer responsible for document proposals |
-| `personas/docs_verifier.md` | Independent reviewer responsible for source accuracy and acceptance |
+| `architecture.py` | Upstream refresh, version gate, document validation, migration and allowed writes |
+| `gameplans/architecture_docs.md` | Documentation phases and strict result contract |
+| `personas/docs_planner.md` | Source ownership inventory and migration planning |
+| `personas/docs_writer.md` | Complete current-contract document proposals |
+| `personas/docs_verifier.md` | Independent source audit and acceptance |
+| `tests/test_architecture.py` | Freshness, proposal, preservation and filesystem boundary regressions |
+
+## Language and Conventions
+
+Python follows the [root conventions](../ARCHITECTURE.md#coding-style-and-code-design);
+gameplans use YAML frontmatter and Markdown, and personas use Markdown.
+`Skill` and `Report` are frozen dataclasses. Invalid source/document boundaries
+raise `ArchitectureError`; I/O errors propagate to the CLI. `_sections` ignores
+fenced examples when finding actual headers (`architecture.py:102`). Reuse
+these parsers and the shared-heading constants instead of duplicating Markdown
+rules in callers. No local formatter or type-checker configuration exists.
+
+## Design and Invariants
+
+After the selected source is ready, the workflow fetches the fixed upstream
+default `HEAD` through Git once per review. The
+supported-contract fingerprint excludes only the three verbatim shared blocks;
+unknown workflow/template changes still stop preflight. `Skill.version` comes
+from valid stable SemVer in the supported specification's `metadata.version`.
+
+`reuse_current` reads only the bounded, regular root `ARCHITECTURE.md` and
+compares its version as an integer triple. A matching version immediately
+returns `Report.audited=False` with the root text. It never enumerates modules,
+validates structure, links or references, reads agent guidance, creates a
+documentation worktree, or calls the panel. Module state and regular agent files
+cannot send a current root back into preparation. The selected or merged source snapshot
+also serves as its guide; panel file-access boundaries still apply.
+
+A missing root or missing, invalid or older root version requires reconciling
+the full set. A newer root stops without changes. Once preparation is needed,
+newer module versions also stop rather than being downgraded. Root path safety
+and I/O errors propagate. Generated version stamps are accepted only after the
+panel audit and host validation; the host never invents stamps.
+
+The merged final set must have exact ordered root/module headers, verbatim
+shared sections, Index coverage, valid confined links, real source paths and
+line references, and fenced test commands. Small modules may use one load-bearing
+reference; ten is the maximum. Semantic ownership, source accuracy and the
+coding-only content rule require source inspection beyond these structural
+checks. Reuse bypasses all these checks and does not prove content freshness;
+the context discloses that only the root version was checked and requires the
+PR/issue panel to inspect full relevant source. Upstream refresh remains mandatory.
+
+Only root `ARCHITECTURE.md` and direct owning modules are model proposal paths.
+`documents` maps paths to complete Markdown; omission retains a file, and
+`null` can remove only an existing direct module. The panel may remove modules
+devoted to non-coding guidance and must repair links/Index entries; the host
+rejects root deletion and references to removed documents. It preserves the
+originals of changed/removed documents and regular agent files as fenced snapshots
+in host-controlled root `ARCHITECTURE-ARCHIVE.md`, outside the architecture set.
+The panel migrates durable coding rules into current documents. Symlink escapes
+are refused. All replacements, archives, removals and agent-entry symlinks are
+staged together and rolled back on recoverable write failure.
 
 ## Key Types and Entry Points
 
-- `architecture.py:43` — `Skill` carries the fetched revision, specification,
-  and verbatim shared sections.
-- `architecture.py:56` — `Report.context()` supplies authoritative root
-  documentation and module paths, with the test-execution limitation.
-- `architecture.py:111` — `sync_skill()` clones the fixed eatmycode origin if
-  absent and fetches its default `HEAD` on every run. Dirty caches, refresh
-  failures, and unsupported contract changes stop the review; stale cached
-  rules are never accepted silently.
-- `architecture.py:171` — `_canonicalize()` installs the current Development
-  Loop, Coding Discipline, and Review Checks before the Index, retaining
-  explicitly named project deviations.
-- `architecture.py:221` — `validate_documents()` checks the full proposed set
-  before writes: allowed paths, shared blocks, module headings, Index coverage,
-  confined link targets, source paths, line references, and test-command blocks.
-- `architecture.py:307` — `_preserve_guidance()` archives regular agent guidance
-  verbatim and retains prior archives across later root-document rewrites.
-- `architecture.py:325` — `_apply()` stages all artifacts and rolls back applied
-  replacements if an I/O operation fails.
-- `architecture.py:367` — `prepare()` always invokes the source audit, even for
-  existing documents, then validates and applies an accepted proposal.
+- `architecture.py:50` — `Skill`: immutable fetched revision, full specification,
+  canonical shared sections and stable semantic version.
+- `architecture.py:58` — `Report`: changed paths, final documents, summary and
+  whether a source audit ran; `context()` exposes the guide and inspection limits.
+- `architecture.py:126` — `_version`: parse supported YAML frontmatter into an
+  integer triple, returning `None` for missing or invalid stable SemVer.
+- `architecture.py:146` — `sync_skill`: refresh the fixed origin, reject dirty,
+  stale/unavailable or unsupported rules, and return the verified `Skill`.
+- `architecture.py:195` — `reuse_current`: check only root version and return
+  a report for reuse, `None` when preparation is needed, or an error for a newer root.
+- `architecture.py:232` — `_canonicalize`: install upstream shared blocks in
+  order before Index, retaining explicitly named project deviations.
+- `architecture.py:283` — `validate_documents`: validate the entire retained
+  proposal and removed-reference set without changing the checkout.
+- `architecture.py:376` — `_archive`: preserve original text outside coding
+  docs, retaining prior snapshots and refusing unsafe/oversized archive files.
+- `architecture.py:396` — `_apply`: stage replacements, removals and symlinks,
+  restore prior artifacts after I/O failure, and return changed paths.
+- `architecture.py:440` — `prepare`: gate the root version, skip preparation or
+  audit and merge proposals, validate, archive and apply; return a `Report`.
 
 ## Interactions
 
-[review-cli.md](review-cli.md) supplies a script-owned detached workspace and
-the documentation-session callback. [git-io.md](git-io.md) owns Git operations
-and preserves the target repository's source checkout. Generated documentation
-remains a local review artifact in that workspace; this module never commits
-or pushes it.
+[Workflow](review-cli.md) calls `reuse_current` once on the final selected-branch
+or locally merged PR source before creating a documentation worktree. If
+preparation is needed, it supplies a separate retained worktree and a generation
+callback. [Git](git-io.md) owns
+transport, isolated sources and guide worktrees. Citations use the selected or
+merged source; generated guide edits remain separate.
 
-[harness.md](harness.md) binds read-only tools to DocsPlanner, DocsWriter, and
-DocsVerifier. Every role speaks in `plan`, `draft`, and `verify`; only the
-writer drafts, and the verifier independently accepts or rejects the final
-proposal. The model returns `documents`, `audited`, and `summary`. Coverage of
-real subsystems and semantic accuracy require this source audit in addition to
-the host's structural validation.
+[Harness](harness.md) supplies DocsPlanner, DocsWriter and DocsVerifier, each
+speaking in `plan`, `draft` and `verify`. Only the writer drafts. The verifier's
+attributed final `DOCS_AUDIT` record and the chair's `audited` field must both
+accept the proposal. The result fields remain `documents`, `audited`, `summary`;
+`documents` values admit Markdown or permitted `null` removals. Archive content
+is excluded from `Report.documents` and generated-guide read grants.
 
-The host writes only `ARCHITECTURE.md`, direct `ARCHITECTURE/*.md`
-documents, and root `AGENT.md`, `AGENTS.md`, and `CLAUDE.md` symlinks targeting
-the control center. Existing regular agent guidance survives inside fenced
-archives, whose historical references are excluded from current-source checks.
-Output paths cannot traverse symlinks. [prompts.md](prompts.md) combines the
-result with case-specific review instructions.
+The model has only source-inspection tools. After an audit, host code creates root `AGENT.md`,
+`AGENTS.md` and `CLAUDE.md` symlinks to the control center after validation and
+preservation. [Profiles](prompts.md) supplement the resulting case context.
+The preflight suite tests the document boundary; workflow integration tests
+exercise the real scripted documentation panel and independent veto.
 
 ## How to Test
 
-Run from the repository root:
+Run from the repository root with the pinned kerness dependency installed:
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 python3 -m py_compile architecture.py
 ```
 
-Passing evidence is exit code zero, an `OK` unittest summary, and no compiler
-diagnostics. `tests/test_architecture.py` owns preflight behavior, including
-refresh failures, rejected proposals, preserved guidance, and write rollback.
-These commands test this tool. Target-project test commands described by
-generated documentation remain unexecuted during a review.
+Passing evidence is exit zero, an `OK` unittest summary, and no compiler
+diagnostics. `tests/test_architecture.py` owns refresh failures, supported
+upstream contract/freshness behavior, root-version reuse and stale-root fallback,
+invalid proposals, guidance preservation, module removals and rollback.
+`tests/test_workflow.py` owns reuse/audit progress and session delegation, real
+scripted panel participation and rejection. Generated target documentation may list test
+commands, but the review tool never executes them or certifies their success.
+
+## Review and Refactor Guide
+
+An upstream contract update requires inspecting the full current specification,
+`sync_skill`, `prepare`, `validate_documents`, gameplan and three personas;
+changing only the fingerprint is insufficient. Align fixtures with the actual
+contract and retain rejection coverage for unsupported changes. Version changes
+must preserve newer documents and audit stale content before stamping.
+
+Migration changes require reviewing `_document_path`, `_archive`, `_apply` and
+removed-reference checks together. Extend the owning preservation/rollback cases
+rather than bypassing validation for legacy content. Archive paths remain host
+controlled and outside generated guide grants. Preserve separate source
+repositories and generated guide worktrees, no target execution, and independent
+audit acceptance.
 
 ## Open Gaps / Roadmap
 
-- A changed upstream workflow or module contract requires an explicit
-  integration update. Only wording inside the three shared sections updates
-  automatically; the remaining specification is checked by fingerprint.
-- Semantic coverage depends on model inspection. The host proves structure
-  and path/reference validity; source audit alone cannot prove runtime behavior.
-- Writes roll back recoverable I/O failures; they are not a filesystem-wide
-  transaction against process termination or power loss.
+- M1: future upstream workflow/template changes need explicit integration review;
+  only wording inside the three shared sections updates automatically.
+- Semantic subsystem coverage and coding-only scope rely on source inspection;
+  generated docs pass host structure/reference checks, not factual interpretation
+  or target runtime behavior. Reused docs have only their root version checked;
+  their modules, structure and content may be stale or incomplete.
+- Rollback covers recoverable I/O errors, not process termination or power loss.
+- Archives are bounded by the document size limit and retained across audits;
+  no archive compaction or automated retention policy is implemented.

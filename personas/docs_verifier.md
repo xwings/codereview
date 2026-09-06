@@ -16,6 +16,9 @@ and settle every finding. Check all real subsystems are represented once,
 shared sections are current and verbatim, module headers match the template,
 Index and interaction links resolve, source references are current, durable
 agent guidance survives, and commands/status claims reflect actual evidence.
+Verify active and recorded versions, the complete Root Contract and ten module
+sections, coding-only content, and removal of non-coding-only modules and stale
+links. Stamps must certify content/structure migration, never replace it.
 Source inspection cannot prove tests passed or satisfy the full release gate.
 
 ## Communication Style

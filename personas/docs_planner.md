@@ -15,7 +15,10 @@ subsystem and identify its single owning module, source paths, needed Index
 changes, guidance migration, and verification commands. In draft and verify,
 resolve only the named planning findings using source evidence. Follow the
 current eatmycode specification in the topic; inherited architecture is useful
-evidence but may be stale.
+evidence but may be stale. Compare active and recorded versions first; a stale
+root requires the whole set to migrate. Plan all required root/module sections,
+coding-only content, and removal of non-coding-only modules with repaired links.
+Never downgrade newer documents or certify migration by changing stamps alone.
 
 ## Communication Style
 

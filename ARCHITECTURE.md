@@ -1,109 +1,202 @@
+---
+eatmycode_version: "1.1.0"
+---
 # codereview
 
-## Mission
+## Mission and Constraints
 
 Review GitHub pull requests and answer issues using the target project's
 architecture and source. A specialist panel investigates, challenges its own
-conclusions, and produces one evidence-backed report for a maintainer.
-PR reviewers each cast a merge recommendation; the tool never merges.
+conclusions, and produces one evidence-backed report for a maintainer. PR
+reviewers each cast a merge recommendation. PRs merge only into isolated local
+review sources; the tool never merges a PR on GitHub.
 
-Every repository is treated equally. `--repo` is required. The target's source
-and architecture are authoritative; optional repository profiles supplement
-them. No project-specific profile ships.
+Every repository is treated equally: `--repo` and `--branch` are required,
+the selected source snapshot is authoritative, and optional profiles only
+supplement it. No project-specific profile ships (`review.py:76`, `review.py:153`).
+Linux and macOS with Python 3.10+ and Git 2.32+ are declared supported in
+`README.md:10`. Target tests, builds and scripts are never executed; this tool's
+own development tests are separate. Offline or unsupported eatmycode
+specification changes stop preflight.
 
-## Target environment
+## Languages and Toolchain
 
-Linux or macOS, Python 3.10+, `git`, authenticated `gh`, and an OpenAI-compatible
-model endpoint. Installing the pinned kerness Rust extension also needs a Rust
-toolchain and a C linker. See [README.md](README.md) for setup and invocation.
+| Area | Declared toolchain and evidence |
+| ---- | ------------------------------- |
+| Root Python modules and `tests/` | Python 3.10+; standard library plus kerness (`README.md:10`, `requirements.txt:4`) |
+| `code.sh` | Bash with strict error handling and direct `exec` (`code.sh:1`) |
+| `gameplans/`, `personas/`, `prompts/` | Markdown profiles and YAML gameplan frontmatter interpreted by Python/kerness |
+| Dependency binding | Rust toolchain, C linker, Cargo and maturin build backend through pip; pinned public source and PyO3 patch (`patches/README.md:3`) |
+| Git transport and GitHub service | Git 2.32+ and authenticated `gh`; argv-based boundaries (`git_io.py:24`, `github_io.py:48`) |
 
-The sole Python dependency is kerness, built using the README commands from public revision
-`7c97dcb4e50a8fd05d05185b0052ba1356be016a` with the tracked PyO3 compatibility
-and security patch. `requirements.txt` records the installed package version.
-Runtime uses its strict session API. `vendor/kerness/` is an optional development
-checkout, not a required local-only dependency. The eatmycode specification is
-fetched from upstream on every invocation; offline or unsupported specification
-changes stop preflight.
+Kerness is the sole Python dependency, installed from public revision
+`7c97dcb4e50a8fd05d05185b0052ba1356be016a` with the tracked compatibility and
+security patch. `requirements.txt` records its installed version; it is not a
+PyPI bootstrap. The optional ignored `vendor/kerness/` source checkout is not a
+runtime dependency. No project-level CI, formatter, linter or type-checker
+configuration is tracked; locally installed tool versions do not define support.
 
-## Workspace layout
+## System Design
 
-| Path | Ownership |
-| ---- | --------- |
-| `code.sh`, `review.py` | Launcher and workflow coordination |
-| `patches/` | Upstream compatibility patch and dependency build provenance |
-| `architecture.py` | Latest eatmycode specification and architecture preparation |
-| `panel_runtime.py`, `session_builder.py` | Session contracts, participation, ballots and progress |
-| `reporting.py` | Report validation, approval gate and Markdown rendering |
-| `repo_facts.py`, `agent_tools.py` | Measured facts and read-only panel tools |
-| `git_io.py`, `github_io.py` | Managed checkouts and GitHub CLI boundary |
-| `gameplans/`, `personas/`, `prompts/` | Panel phases, specialist roles, optional review knowledge |
-| `tests/` | Offline behavioral and integration checks |
-| `repo/` | Ignored managed clones and retained `.reviews/` worktrees |
-| `vendor/` | Ignored upstream specification and optional kerness checkout |
+`review.py` coordinates the workflow. `progress.py` supplies shared stderr
+activity messages and elapsed-time heartbeats to the CLI and panel runtime.
+The CLI calls architecture preparation, checkout/GitHub boundaries, panel
+construction/runtime, and report validation;
+those modules own their contracts and do not import the CLI. `repo_facts.py`
+and `agent_tools.py` collect inspection evidence through the I/O boundaries.
+Gameplans and personas define panel behavior; host code verifies actual
+participation, result shape and independent ballots (`panel_runtime.py:141`).
+The [Index](#index) routes subsystem changes and their interaction partners.
 
-`AGENT.md`, `AGENTS.md` and `CLAUDE.md` point here. The module Index owns subsystem details;
-keep those details out of this control center.
-
-## Entry flow
-
-1. `code.sh` selects `.venv/bin/python` (or legacy `venv/bin/python`) and forwards
-   arguments to `review.py` without changing the caller's working directory or
-   processing its output. `review.py` parses `--id NUMBER` for automatic routing;
-   legacy positional `auto|pr|issue NUMBER` remains supported.
-2. Validate credentials/options, refresh eatmycode, and prepare documentation
-   against the configured/default branch before identifying the target kind.
-3. Confirm whether the number is a PR or issue. `--id` routes it; an incorrect
-   explicit `pr` or `issue` exits with the actual kind.
-4. A PR gets a fresh review branch, an immutable source worktree and a second
-   documentation audit of its own head. An issue uses the baseline source and
-   audited documentation. Generated guides occupy separate local worktrees;
-   original source remains the citation authority.
-5. Run the appropriate panel. Every specialist studies architecture, owning
-   module documents and complete related source before reaching conclusions.
-6. Check actual participation, strict result fields, citations and ballots.
-   Print one report; post through `gh` unless `--dry-run`. A PR changing during
-   review invalidates the result before posting.
-
-The PR panel has language/tooling, API design, refactoring, senior engineering,
-architecture, supply-chain and security specialists. Each participates in
-study, review, debate, verification and voting. The chair records its own
-vote after hearing everyone. Approval requires all eight merge votes, seven
-passing checks, justified need, no major/blocker findings, an open non-draft
-PR and an approving rubric verdict. `--allow-approve` additionally controls
-whether GitHub receives an approval or a comment.
-
-## Hard guardrails
+Cross-cutting invariants:
 
 - All GitHub service access goes through `github_io.gh`; target/specification
   git transport goes through `git_io.git`. No raw GitHub API writes.
-- Never merge, close a PR/issue, push, or apply labels. Known command forms are
-  denied centrally; available writes are PR reviews and issue comments only.
+- Never merge a PR on GitHub, close a PR/issue, push, or apply labels. Known
+  command forms are denied centrally; available service writes are PR reviews
+  and issue comments only. PR source preparation permits an isolated local merge.
 - Never execute target tests, builds or scripts. Panel gameplans expose no
-  command, shell, write or memory-write tool. Local project-development tests
-  are distinct from reviewing an untrusted target.
-- Panel file access is confined to its source checkout, explicitly allowed
-  generated guide files and an optional caller-selected transcript path.
-- Generated documentation is applied only to retained local worktrees after
-  validation, with rollback on write failure. It is never pushed or committed.
-- Preserve dirty managed clones and existing durable agent guidance. Do not
-  reset uncommitted work or silently replace a different repository's clone.
-- Hold API credentials in memory. Disable kerness session persistence and
-  never include credentials in topics, reports or transcripts.
-- Incomplete evidence does not pass. Missing reviewers, malformed results,
-  rejected documentation audits and invalid citations stop publication.
+  command, shell, write or memory-write tool.
+- Panel reads stay inside its source checkout, explicitly allowed generated
+  guide files and an optional caller-selected transcript (`session_builder.py:38`).
+- Generated documentation is validated before writes to retained local guide
+  worktrees, with rollback on write failure. It is never pushed or committed.
+- Preserve managed working trees, local branch refs and durable agent guidance.
+  Reject dirty clones; do not reset work or replace a different repository's clone
+  (`git_io.py:62`, `git_io.py:83`).
+- Keep credentials in memory; disable kerness session persistence and exclude
+  credentials from topics, reports and transcripts (`session_builder.py:29`).
+- Missing reviewers, malformed results, rejected documentation audits and invalid
+  citations stop publication (`panel_runtime.py:141`, `reporting.py:41`).
+
+## Runtime and Data Flow
+
+1. `code.sh` selects `.venv/bin/python` or legacy `venv/bin/python`, forwards
+   arguments and preserves the caller's directory and process exit status.
+   `review.py:76` accepts `--id NUMBER` or legacy `auto|pr|issue NUMBER`.
+2. `review.py:419` validates options and credentials, identifies the PR/issue
+   kind and rejects an explicit mismatch before source preparation. It fetches
+   PR metadata when applicable, then checks the managed clone.
+3. Git prepares an isolated snapshot of the required `--branch`. Issues use
+   that branch exactly; PRs merge the pinned PR head into it locally. Conflicts
+   and changed fetched heads stop before documentation or model calls. The CLI
+   refreshes eatmycode and checks the final source's root version once. A current
+   `ARCHITECTURE.md` skips documentation preparation; missing or outdated roots
+   receive a separate retained guide worktree (`git_io.py:109`, `review.py:310`).
+4. The panel studies architecture and complete relevant source, debates findings
+   and verifies conclusions. The host checks participation, strict result fields,
+   citations and ballots, then renders one report naming the selected branch,
+   pinned base and reviewed revision. PR citations refer to the local merge
+   result and may differ from GitHub PR-head lines.
+5. `review.py:340` prints Markdown to stdout and posts through `gh` unless
+   `--dry-run`. PR metadata is checked again before publication. Progress and
+   suggested labels go to stderr; errors and interruption return nonzero.
+
+CLI flags and `REVIEW_API_KEY`, `REVIEW_API_BASE`, `REVIEW_MODEL` configure the
+provider. `--timeout` limits each model request; calls are synchronous, with no
+whole-run deadline. Each active progress scope has a temporary thread that
+prints a heartbeat every 15 seconds and is stopped and joined on scope exit,
+including errors and interruption (`progress.py:15`). Panel status identifies
+model waits, evidence inspection, phases and completed specialist turns.
+Optional transcripts are explicit files; session state is not persisted.
+Managed clones, isolated source repositories, guide worktrees and the upstream
+rule cache are retained across process exit. There is no service, database or
+shutdown worker. See [workflow](ARCHITECTURE/review-cli.md) and
+[panels](ARCHITECTURE/harness.md) for contracts and failure paths.
+
+## Workspace Map
+
+| Path | Ownership and edit constraints |
+| ---- | ------------------------------ |
+| `code.sh`, `review.py`, `progress.py`, `repo_facts.py` | Launcher, coordination, stderr activity/heartbeat and measured PR leads |
+| `architecture.py` | Specification refresh, audit and validated local documentation writes |
+| `panel_runtime.py`, `session_builder.py`, `agent_tools.py` | Panel execution, access policy and read-only tools |
+| `reporting.py` | Result validation and Markdown rendering |
+| `git_io.py`, `github_io.py` | Git transport, managed snapshots and GitHub CLI boundary |
+| `gameplans/`, `personas/`, `prompts/` | Panel contracts, specialist roles and optional review knowledge |
+| `tests/` | Offline behavioral/integration checks using temporary repositories and scripted replies |
+| `patches/`, `requirements.txt` | Dependency patch/provenance and installed version; regenerate only with a verified public revision |
+| `ARCHITECTURE.md`, `ARCHITECTURE/` | Coding reference; `AGENT.md`, `AGENTS.md`, `CLAUDE.md` symlink to the root |
+| `repo/` | Ignored managed target clones and retained `.reviews/` sources/guides; never treat as tool source |
+| `vendor/` | Ignored specification cache refreshed by preflight and optional dependency checkout built below |
+
+## Coding Style and Code Design
+
+Observed Python conventions are four-space indentation, `snake_case` functions,
+`UPPER_CASE` constants, standard-library imports before local imports, postponed
+annotations and typed boundaries. Reuse `Path`, dataclasses for fixed internal
+records, and dictionaries for model/CLI payloads (`panel_runtime.py:102`,
+`session_builder.py:38`, `reporting.py:57`). Annotations are not uniform or
+statically enforced; preserve the surrounding style rather than imposing a new
+checker. No formatter/linter/type-check command is configured.
+
+Keep external commands argv-based and inside their I/O owner. Validation modules
+raise domain errors; CLI coordination turns them into concise nonzero exits.
+Tool handlers return explicit unavailable-evidence text so the panel can record
+a gap (`agent_tools.py:101`). Runtime progress is flushed to stderr; stdout
+belongs to the final report. Tests use `unittest`, temporary directories, mocks and scripted
+kerness providers (`tests/test_workflow.py:38`). Add no top-level dependency
+without evidence that standard-library implementation is unreasonable.
+
+## Verification and Review Map
+
+Run from the repository root. Initial developer setup requires Python 3.10+,
+Rust, a C linker and Git 2.32+; the pinned dependency can be built from public source:
+
+```sh
+python3 -m venv .venv
+git clone https://github.com/xwings/kerness.git vendor/kerness
+git -C vendor/kerness checkout --detach 7c97dcb4e50a8fd05d05185b0052ba1356be016a
+git -C vendor/kerness apply ../../patches/kerness-pyo3.patch
+MATURIN_PEP517_ARGS='--locked' .venv/bin/pip install ./vendor/kerness/bindings/python
+.venv/bin/python -m kerness.selfcheck
+```
+
+With the dependency installed, run the offline suite and static syntax checks:
+
+```sh
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m compileall -q *.py tests
+bash -n code.sh
+./code.sh --help
+```
+
+Expected evidence: `OK` from unittest, successful kerness selfcheck, no compile
+or Bash diagnostics, and help listing the documented options; every command
+exits zero. There is no separate application build step or configured CI,
+lint/type-check target. Dependency patch changes additionally use the optional
+upstream checks in [harness](ARCHITECTURE/harness.md).
+
+| Change owner | Required verification and limits |
+| ------------ | -------------------------------- |
+| Architecture preflight | `tests/test_architecture.py`: refresh/version gates, current-doc reuse, full proposal validation, preservation and rollback |
+| CLI, Git/GitHub and profiles | `tests/test_workflow.py`, `tests/test_git_io.py`: required branch/routing, isolated local merges, source citations, body-file writes and no-write guards |
+| Panels and reporting | `tests/test_workflow.py`: real scripted session rounds, independent ballots/audits, strict completion, approval and rendering |
+| Documentation | Validate current source references, relative links, exact shared/root/module sections and matching verified version stamps |
+
+Offline tests use no external model calls or GitHub writes and never execute
+untrusted target code. Live model interpretation and GitHub posting remain
+unverified by that suite. Fresh-clone builds must use the public pin and tracked
+patch, with no local-only dependency. Target review claims remain limited to
+source and supplied evidence.
 
 ## Roadmap
 
-- **M1 — Documentation-first routing:** latest specification, safe local doc
-  preparation, separate original source and guide, PR/issue identification.
-- **M2 — Accountable review:** distinct specialists, debate, attributed votes,
-  strict completion and approval gates, readable reports.
-- **M3 — Public project quality:** reproducible installation, direct launcher,
-  offline integration tests, current architecture and independent review.
+- **M1 — Documentation-first routing:** implemented latest-specification
+  preparation after PR/issue detection, selected-branch source and local PR
+  merges, with generated guides kept separate.
+  The architecture owner maintains versioned contracts and migration checks.
+- **M2 — Accountable review:** implemented specialist debate, attributed votes,
+  strict completion/approval gates and readable reports.
+- **M3 — Public project quality:** implemented reproducible dependency setup,
+  direct launcher and offline integration tests; architecture is audited against
+  source. Live provider quality and posting are not proved by scripted replies.
 
-M1–M3 are implemented. The automated checks exercise scripted model replies;
-live model quality and GitHub posting require a separately configured smoke
-run. See the module gaps for operational limitations.
+No additional milestones are accepted. Evidence-backed candidates are recorded
+in owning module gaps: bounded overall execution and broader measurement
+coverage in workflow, concurrent workspace and specification-cache access, and non-PyPI
+advisory coverage in panels. Each requires explicit scope and behavioral
+verification before it becomes accepted work.
 
 ## Development Loop
 
@@ -120,10 +213,11 @@ Frame → Write → Prove → Review → Gate
 
 **1. Frame.** Convert the request into a goal with an observable check.
 Inspect the request, code, docs, and repository conventions; record the
-narrowest supported assumptions. Ask one focused question only when a
-required decision cannot be discovered or safely inferred and guessing
-would materially change the result. Once framed, continue without an
-approval pause.
+narrowest supported assumptions. When using eatmycode, run its Version
+and Freshness Gate before trusting architecture guidance. Ask one focused
+question only when a required decision cannot be discovered or safely
+inferred and guessing would materially change the result. Once framed,
+continue without an approval pause.
 
 **2. Write.** Make the smallest change that reaches the goal. Add no
 unrequested features or abstractions, match local style, touch only
@@ -192,12 +286,18 @@ release. There is no separate approval or reporting phase.
 
 **Legibility and contract**
 
-- A new maintainer can build, test, run, and understand public behavior
-  from the docs.
+- An agent can locate the owning code, identify language/style/design
+  constraints, select a safe change or refactor, review its impact, and
+  run the right checks from `ARCHITECTURE.md` and the owning module docs.
 - Every changed line serves the goal; no drive-by formatting, debugging
   remnants, commented-out code, secrets, tokens, or local paths remain.
 - Public names, signatures, errors, and recovery are intelligible.
-- Architecture docs and `file:line` references are current.
+- Architecture docs and `file:line` references reflect current source;
+  version stamps certify a verified contract migration, not just a
+  metadata edit.
+- Architecture docs contain only coding context; any encountered
+  deployment guides or other non-coding material and obsolete links were
+  removed from the doc set.
 - Breaking changes, deprecations, dependencies, licenses, and attribution
   are handled; commit or PR text explains why.
 
@@ -210,8 +310,9 @@ release. There is no separate approval or reporting phase.
   otherwise return the surviving evidence to Frame.
 - Three passes on one finding return automatically to Frame for a new
   approach.
-- Never widen scope to satisfy a finding. Record out-of-scope work under
-  **Open Gaps / Roadmap**.
+- Never widen scope to satisfy a finding. Record coding-related follow-up
+  work under **Open Gaps / Roadmap**; keep non-coding work outside the
+  architecture doc set.
 
 ## Coding Discipline
 
@@ -297,9 +398,11 @@ belong to Prove, not this check.
 ### 5. Fit
 
 Read `ARCHITECTURE.md` and the owning module doc before the diff. Check
-scope, layering, ownership, public-API growth, and performance claims. A
-layering violation or unjustified public API is `major`. Architectural or
-public-behavior changes must update the relevant docs in the same change.
+documented language/toolchain constraints, code-design conventions,
+scope, layering, ownership, invariants, public-API growth, compatibility,
+and performance claims against source evidence. A layering violation or
+unjustified public API is `major`. Architectural or public-behavior changes
+must update the relevant docs in the same change.
 
 ### 6. Dependencies
 
@@ -337,6 +440,11 @@ create a reporting phase.
   submissions inspect source and documentation only; they never claim a target
   test run or full eatmycode release compliance. This does not waive this
   project's own build, test or review criteria.
+- Target documentation preparation checks only the root `ARCHITECTURE.md`
+  version. A matching version skips preparation without checking modules,
+  structure, references or agent guidance. The context discloses the skipped
+  checks; review panels still inspect relevant source. See
+  [preflight](ARCHITECTURE/architecture-preflight.md).
 - The generic review rubric requires a demonstrated need before approval.
   Preserve `Need: justified`, `Need: unclear` or `Need: unnecessary` in Fit's
   checklist note. Missing context is a concern, not a fabricated code defect.
@@ -345,10 +453,12 @@ create a reporting phase.
 
 ## Index
 
-- [Workflow and launcher](ARCHITECTURE/review-cli.md)
-- [Architecture preflight](ARCHITECTURE/architecture-preflight.md)
-- [Panels, tools and attributed ballots](ARCHITECTURE/harness.md)
-- [Report and approval policy](ARCHITECTURE/reporting.md)
-- [GitHub access](ARCHITECTURE/github-io.md)
-- [Git checkouts](ARCHITECTURE/git-io.md)
-- [Repository profiles and prompts](ARCHITECTURE/prompts.md)
+| Owning module | Source paths | Responsibility and change triggers |
+| ------------- | ------------ | ---------------------------------- |
+| [Workflow and launcher](ARCHITECTURE/review-cli.md) | `review.py`, `code.sh`, `progress.py`, `repo_facts.py` | Routing, configuration, source/guide flow, shared progress and measured PR leads; read I/O, preflight and panel partners when changing coordination |
+| [Architecture preflight](ARCHITECTURE/architecture-preflight.md) | `architecture.py`, `gameplans/architecture_docs.md`, `personas/docs_*.md` | Upstream contract, freshness, source audit, document validation/migration and local writes; consult panel and Git contracts |
+| [Panels, tools and ballots](ARCHITECTURE/harness.md) | `panel_runtime.py`, `session_builder.py`, `agent_tools.py`, `gameplans/`, `personas/`, `patches/`, `requirements.txt` | Runtime, rosters, read boundaries, progress, strict completion and dependency integration; PR/issue gameplans and non-doc personas owned here; docs behavior belongs to preflight |
+| [Report and approval policy](ARCHITECTURE/reporting.md) | `reporting.py` | Result/citation validation, approval eligibility and rendering; ballot changes also require panel/CLI review |
+| [GitHub access](ARCHITECTURE/github-io.md) | `github_io.py` | Service reads, kind detection, permitted report writes and shared command restrictions; inspect Git/CLI callers |
+| [Git checkouts](ARCHITECTURE/git-io.md) | `git_io.py` | Origins, clean clones, isolated branch/merge sources, pinned diffs and guide worktrees; consult preflight/CLI source ownership |
+| [Profiles and prompts](ARCHITECTURE/prompts.md) | `prompts/`, profile/topic functions in `review.py` | Supplementary Markdown knowledge and review rubric; source authority and report gates constrain changes |

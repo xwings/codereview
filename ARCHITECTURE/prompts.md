@@ -1,3 +1,6 @@
+---
+eatmycode_version: "1.1.0"
+---
 # Repository profiles and shared prompts
 
 ## Goal
@@ -15,21 +18,36 @@ the authoritative target source or current architecture guide (M1–M2).
 | ---- | ---- |
 | `prompts/default/ARCHITECTURE.md` | Explains that no supplementary map is supplied |
 | `prompts/default/design.md` | Generic severity and need/approval rubric |
-| `prompts/default/profile.json` | Empty default: no pinned baseline branch |
 | `prompts/coding_styles.md` | Shared style reference; the repository wins |
 | `prompts/repos/README.md` | Optional owner/name profile conventions |
 | `review.py` | Profile lookup and topic composition |
 
+## Language and Conventions
+
+Markdown profiles are read by Python. Follow the
+[root conventions](../ARCHITECTURE.md#coding-style-and-code-design) for source,
+and the observed need/severity vocabulary in `prompts/default/design.md`.
+`review.py:168` supplies fallback text. No Markdown formatter or profile schema
+checker is configured. Profiles carry supplementary prose only.
+
+## Design and Invariants
+
+Profiles are supplemental evidence, never target source authority or permission
+to expand tools. An explicit profile wins over an owner/name directory, then
+defaults apply. Required `--branch` selects the reviewed branch; profiles cannot
+choose it. JSON branch pins and default-branch fallbacks were removed. Required
+rubric/style files fail clearly when absent. Profile text cannot bypass the
+host's approval or citation gates; repository-specific knowledge does not ship.
+
 ## Key Types and Entry Points
 
-- `review.py:150` — `resolve_profile`: explicit `--prompts`, then
+- `review.py:153` — `resolve_profile`: explicit `--prompts`, then
   `prompts/repos/<owner>/<name>`, then `prompts/default`.
-- `review.py:165` — `profile_base_branch`: optional `base_branch` in JSON.
-- `review.py:197` — `_read_prompt`: profile → default → shared root; required
+- `review.py:168` — `_read_prompt`: profile → default → shared root; required
   design/style files missing is an error.
-- `review.py:251` — `build_pr_topic`: audited guide first, profile notes
+- `review.py:222` — `build_pr_topic`: prepared guide first, profile notes
   explicitly supplementary, then rubric/style/facts and the case.
-- `review.py:303` — `build_issue_topic`: architecture and source-backed triage;
+- `review.py:274` — `build_issue_topic`: architecture and source-backed triage;
   it does not apply the PR approval rubric to an issue.
 - `repo_facts.py:23` — `INDENT_LANGS`: measured languages match the shared style
   reference; other languages fall back to repository inspection.
@@ -43,22 +61,34 @@ rubric may strengthen policy, but cannot bypass host approval gates.
 ## Interactions
 
 [Workflow](review-cli.md) resolves and announces a profile.
-[Architecture preflight](architecture-preflight.md) supplies current source
-facts independently of that profile. [Harness personas](harness.md) own roles;
+[Architecture preflight](architecture-preflight.md) supplies a prepared guide
+and its audit status independently of that profile. [Harness personas](harness.md) own roles;
 [reporting](reporting.md) enforces the final approval contract.
 
 ## How to Test
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
-python3 -m json.tool prompts/default/profile.json
+python3 -m py_compile review.py
 ```
 
-Expected: tests pass, default profile is `{}`, no owner/name profile ships,
-and topic tests place audited architecture ahead of supplementary notes.
+Expected: tests pass, including required explicit branch selection, and compile
+exits zero. Source inspection establishes that no owner/name
+profile ships and topic builders place prepared architecture before supplementary
+notes (`review.py:222`, `review.py:274`); the suite does not assert that ordering.
+
+## Review and Refactor Guide
+
+For profile precedence changes inspect `resolve_profile` and `_read_prompt`
+with [workflow](review-cli.md). Rubric wording changes
+must preserve `Need:` conclusions accepted by [reporting](reporting.md) and
+roles in [harness](harness.md). Run the workflow suite after profile changes.
+Do not add a bundled project profile or move authoritative source facts into
+a static prompt. Broader language guidance must agree with measured support
+in `repo_facts.py`; unmeasured languages continue to rely on repository evidence.
 
 ## Open Gaps / Roadmap
 
 - Profiles are manual supplementary snapshots and can become stale; source
-  and audited documentation take precedence.
+  and prepared documentation take precedence.
 - Only Python, C, C++ and Rust have measured style/symbol leads today.
