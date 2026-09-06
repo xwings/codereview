@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
 
-from github_io import FORBIDDEN_GIT_PREFIXES, ForbiddenCommand, _check_prefix, gh
+from github_io import FORBIDDEN_GIT_PREFIXES, _check_prefix, gh
 
 
 def git(*args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -73,3 +74,26 @@ def checkout_pr(clone: Path, repo: str, n: int, short_sha: str) -> str:
             git("branch", "-D", stale, cwd=clone)
     gh("pr", "checkout", str(n), "--repo", repo, "-b", branch, cwd=clone)
     return branch
+
+
+def review_workspace(clone: Path, workdir: Path, label: str) -> Path:
+    """Keep documentation edits in a retained, detached review worktree."""
+    parent = workdir.resolve() / ".reviews"
+    parent.mkdir(parents=True, exist_ok=True)
+    workspace = Path(tempfile.mkdtemp(prefix=f"{clone.name}-{label}-", dir=parent))
+    workspace.rmdir()  # git creates the directory itself
+    git("worktree", "add", "--detach", str(workspace), "HEAD", cwd=clone)
+    return workspace
+
+
+def require_head(clone: Path, expected: str) -> None:
+    actual = git("rev-parse", "HEAD", cwd=clone).stdout.strip()
+    if actual != expected:
+        raise SystemExit("error: PR head changed during checkout. Nothing posted; re-run the review.")
+
+
+def pr_diff(clone: Path, base: str) -> str:
+    """Diff the checked-out revision, so the topic and source cannot race."""
+    git("fetch", "origin", base, cwd=clone)
+    merge_base = git("merge-base", "FETCH_HEAD", "HEAD", cwd=clone).stdout.strip()
+    return git("diff", "--no-ext-diff", "--no-textconv", merge_base, "HEAD", cwd=clone).stdout

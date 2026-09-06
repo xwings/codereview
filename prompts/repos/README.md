@@ -21,12 +21,13 @@ backstops the rest. Creating a directory here needs no Python change.
 ## What to put in each
 
 - **`ARCHITECTURE.md`** — layering, module ownership, the public API surface,
-  the invariants a contributor is expected to know. This is what checks 3 and 5
-  are measured against; without it the panel spends its `study_repo` phase
-  deriving the structure from the tree instead of being handed it.
+  the invariants a contributor is expected to know. These are supplementary
+  notes; the automatically audited guide and original source take precedence.
+  A profile never skips the mandatory documentation preflight.
 - **`design.md`** — what *this* maintainer considers a blocker. It must define
-  the severity vocabulary and the approve threshold, because `review.py`'s
-  `downgrade_if_needed` acts on them; `../default/design.md` is the template.
+  the severity vocabulary and the approve threshold; `../default/design.md`
+  is the template. `reporting.validate_pr` always enforces unanimous merge
+  votes, justified need and no unresolved major/blocker findings.
 - **`coding_styles.md`** — only when the project's languages fall outside the
   four the shared file covers (Python, C, C++, Rust). Overriding it replaces
   the whole file, not one section.

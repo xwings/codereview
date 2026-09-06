@@ -1,11 +1,12 @@
-# No curated architecture reference for this repository
+# No supplementary architecture profile
 
-This project has no profile under `prompts/repos/<owner>/<name>/`, so nobody has
-written down its layering, its public API surface, or its internal boundaries
-for you. You are reading the fallback.
+No curated profile notes were supplied. The topic already identifies a current
+eatmycode architecture guide prepared from this checkout. Read that guide, the
+original project architecture when present, the owning module documents and
+complete related source during `study_repo` before assessing the case.
 
-**Do not invent a structure.** The `study_repo` phase exists precisely for this
-case: build the map yourself, from the tree, before you look at the diff.
+**Do not invent a structure.** Confirm documentation against the original
+source. Generated guides are local references, not changes submitted by the PR.
 
 In your own area only, and using `list_dir`, `read_file` and `repo_grep`:
 
@@ -28,5 +29,5 @@ where you could not establish a baseline. An area with no settled convention is
 itself a finding, and it limits what you may demand of this pull request: you
 cannot hold a contributor to a rule that nothing in the tree demonstrates.
 
-To give a project a real architecture reference instead of this one, add
-`prompts/repos/<owner>/<name>/ARCHITECTURE.md`. No code change is needed.
+Optional curated notes belong in `prompts/repos/<owner>/<name>/ARCHITECTURE.md`.
+They supplement the audited guide and source; they do not replace preflight.

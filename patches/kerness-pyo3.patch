@@ -1,0 +1,1008 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 499a318..b112e33 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -17,12 +17,6 @@ version = "0.5.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
+ 
+-[[package]]
+-name = "autocfg"
+-version = "1.5.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+-
+ [[package]]
+ name = "base64"
+ version = "0.22.1"
+@@ -264,15 +258,6 @@ dependencies = [
+  "hashbrown 0.17.1",
+ ]
+ 
+-[[package]]
+-name = "indoc"
+-version = "2.0.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
+-dependencies = [
+- "rustversion",
+-]
+-
+ [[package]]
+ name = "itoa"
+ version = "1.0.18"
+@@ -281,7 +266,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+ 
+ [[package]]
+ name = "kerness"
+-version = "0.1.1-dev"
++version = "0.1.2-dev"
+ dependencies = [
+  "fancy-regex",
+  "libc",
+@@ -295,7 +280,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "kerness-py"
+-version = "0.1.1-dev"
++version = "0.1.2-dev"
+ dependencies = [
+  "kerness",
+  "pyo3",
+@@ -326,15 +311,6 @@ version = "2.8.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+ 
+-[[package]]
+-name = "memoffset"
+-version = "0.9.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+-dependencies = [
+- "autocfg",
+-]
+-
+ [[package]]
+ name = "once_cell"
+ version = "1.21.4"
+@@ -373,37 +349,32 @@ dependencies = [
+ 
+ [[package]]
+ name = "pyo3"
+-version = "0.23.5"
++version = "0.29.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "7778bffd85cf38175ac1f545509665d0b9b92a198ca7941f131f85f7a4f9a872"
++checksum = "4688ddedf473e32662b9b067670129a8afb8c18e351482c70d62ba4a88171e8b"
+ dependencies = [
+- "cfg-if",
+- "indoc",
+  "libc",
+- "memoffset",
+  "once_cell",
+  "portable-atomic",
+  "pyo3-build-config",
+  "pyo3-ffi",
+  "pyo3-macros",
+- "unindent",
+ ]
+ 
+ [[package]]
+ name = "pyo3-build-config"
+-version = "0.23.5"
++version = "0.29.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "94f6cbe86ef3bf18998d9df6e0f3fc1050a8c5efa409bf712e661a4366e010fb"
++checksum = "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9"
+ dependencies = [
+- "once_cell",
+  "target-lexicon",
+ ]
+ 
+ [[package]]
+ name = "pyo3-ffi"
+-version = "0.23.5"
++version = "0.29.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "e9f1b4c431c0bb1c8fb0a338709859eed0d030ff6daa34368d3b152a63dfdd8d"
++checksum = "e591a95526fead067432c3b3a33fc74770b87b1e04e73671090d9c2055a2b327"
+ dependencies = [
+  "libc",
+  "pyo3-build-config",
+@@ -411,9 +382,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "pyo3-macros"
+-version = "0.23.5"
++version = "0.29.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "fbc2201328f63c4710f68abdf653c89d8dbc2858b88c5d88b0ff38a75288a9da"
++checksum = "73225868fc1cd84eef2c3c230ddb91273bf1de46aeb8a4248da76d32a0924a1c"
+ dependencies = [
+  "proc-macro2",
+  "pyo3-macros-backend",
+@@ -423,13 +394,12 @@ dependencies = [
+ 
+ [[package]]
+ name = "pyo3-macros-backend"
+-version = "0.23.5"
++version = "0.29.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "fca6726ad0f3da9c9de093d6f116a93c1a38e417ed73bf138472cf4064f72028"
++checksum = "571575aa3749fa6216757dd47d2a3e7ef360f329a40f0666a9fbd14889024952"
+ dependencies = [
+  "heck",
+  "proc-macro2",
+- "pyo3-build-config",
+  "quote",
+  "syn 2.0.119",
+ ]
+@@ -521,12 +491,6 @@ dependencies = [
+  "untrusted",
+ ]
+ 
+-[[package]]
+-name = "rustversion"
+-version = "1.0.23"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+-
+ [[package]]
+ name = "serde"
+ version = "1.0.229"
+@@ -636,9 +600,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "target-lexicon"
+-version = "0.12.16"
++version = "0.13.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
++checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
+ 
+ [[package]]
+ name = "tinystr"
+@@ -656,12 +620,6 @@ version = "1.0.24"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+ 
+-[[package]]
+-name = "unindent"
+-version = "0.2.4"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
+-
+ [[package]]
+ name = "untrusted"
+ version = "0.9.0"
+diff --git a/bindings/python/Cargo.toml b/bindings/python/Cargo.toml
+index f62bbe0..0c9a991 100644
+--- a/bindings/python/Cargo.toml
++++ b/bindings/python/Cargo.toml
+@@ -13,5 +13,5 @@ crate-type = ["cdylib"]
+ 
+ [dependencies]
+ kerness = { path = "../../crates/kerness" }
+-pyo3 = { version = "0.23", features = ["extension-module", "abi3-py310"] }
++pyo3 = { version = "0.29.2", features = ["extension-module", "abi3-py310"] }
+ serde_json.workspace = true
+diff --git a/bindings/python/src/access.rs b/bindings/python/src/access.rs
+index 793d3c5..7acdc99 100644
+--- a/bindings/python/src/access.rs
++++ b/bindings/python/src/access.rs
+@@ -24,7 +24,13 @@ use crate::types::{path_to_py, pybool};
+ // -------------------------------------------------------------- AccessRequest
+ 
+ /// A single access request, as an approver is shown it.
+-#[pyclass(name = "AccessRequest", module = "kerness._core", frozen, get_all)]
++#[pyclass(
++    name = "AccessRequest",
++    module = "kerness._core",
++    frozen,
++    get_all,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyAccessRequest {
+     /// `"command"` — the only kind the framework raises.
+@@ -121,7 +127,7 @@ impl PyConsole {
+     /// a console question is not worth raising from: the honest reading of a
+     /// stream that cannot say whether it is a terminal is that it is not one.
+     fn is_terminal(stream: &str) -> bool {
+-        Python::with_gil(|py| -> PyResult<bool> {
++        Python::attach(|py| -> PyResult<bool> {
+             let stream = py.import("sys")?.getattr(stream)?;
+             if stream.is_none() {
+                 return Ok(false);
+@@ -146,7 +152,7 @@ impl ConsolePrompt for PyConsole {
+         // replaced it may have replaced `input` instead — and because `EOFError`
+         // is what end of input arrives as here, which `ok()` turns into the
+         // `None` the trait asks for.
+-        Python::with_gil(|py| -> PyResult<String> {
++        Python::attach(|py| -> PyResult<String> {
+             py.import("builtins")?
+                 .call_method1("input", (question,))?
+                 .extract()
+@@ -171,7 +177,7 @@ impl ApprovePrompt for PyApprove {
+     fn approve(&self, request: &AccessRequest) -> bool {
+         // A raising approver is a denial: the decision is the caller's, and a
+         // caller whose approver blew up has not made one.
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             self.callable
+                 .bind(py)
+                 .call1((PyAccessRequest::adopt(request),))
+diff --git a/bindings/python/src/channel.rs b/bindings/python/src/channel.rs
+index 7e03741..5d65855 100644
+--- a/bindings/python/src/channel.rs
++++ b/bindings/python/src/channel.rs
+@@ -52,9 +52,9 @@ impl PyChannel {
+     /// Call *method* on the channel, keeping any exception for `run()`.
+     fn call<A>(&self, method: &str, arguments: A) -> Result<()>
+     where
+-        A: for<'py> IntoPyObject<'py, Target = pyo3::types::PyTuple>,
++        A: for<'py> pyo3::call::PyCallArgs<'py>,
+     {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             self.inner
+                 .bind(py)
+                 .call_method1(method, arguments)
+@@ -148,16 +148,16 @@ pub fn bind_channel(object: &Bound<'_, PyAny>) -> PyResult<Option<BoundChannel>>
+ /// happens to inherit, and taking the shortcut past it would call the base
+ /// implementation the subclass exists to wrap.
+ fn native_channel(object: &Bound<'_, PyAny>) -> Option<Arc<dyn Channel>> {
+-    if let Ok(native) = object.downcast_exact::<PyConsoleChannel>() {
++    if let Ok(native) = object.cast_exact::<PyConsoleChannel>() {
+         return Some(native.get().inner.clone());
+     }
+-    if let Ok(native) = object.downcast_exact::<PyFileChannel>() {
++    if let Ok(native) = object.cast_exact::<PyFileChannel>() {
+         return Some(native.get().inner.clone());
+     }
+-    if let Ok(native) = object.downcast_exact::<PyLogChannel>() {
++    if let Ok(native) = object.cast_exact::<PyLogChannel>() {
+         return Some(native.get().inner.clone());
+     }
+-    if let Ok(native) = object.downcast_exact::<PyMultiChannel>() {
++    if let Ok(native) = object.cast_exact::<PyMultiChannel>() {
+         return Some(native.get().inner.clone());
+     }
+     None
+@@ -310,7 +310,7 @@ struct PyConsoleWriter;
+ 
+ impl ConsoleWriter for PyConsoleWriter {
+     fn write_line(&self, line: &str) -> Result<()> {
+-        Python::with_gil(|py| -> PyResult<()> {
++        Python::attach(|py| -> PyResult<()> {
+             let options = PyDict::new(py);
+             options.set_item("flush", true)?;
+             py.import("builtins")?
+@@ -342,7 +342,7 @@ impl Logger for PyLogger {
+         // A diagnostic that cannot be delivered is dropped: it is already the
+         // report of something the framework survived, and raising here would
+         // turn a survivable problem into a failed run.
+-        let _ = Python::with_gil(|py| -> PyResult<()> {
++        let _ = Python::attach(|py| -> PyResult<()> {
+             py.import("logging")?
+                 .call_method1("getLogger", ("kerness",))?
+                 .call_method1(method, (message,))?;
+diff --git a/bindings/python/src/convert.rs b/bindings/python/src/convert.rs
+index 2a3dbaf..96fae20 100644
+--- a/bindings/python/src/convert.rs
++++ b/bindings/python/src/convert.rs
+@@ -60,24 +60,24 @@ pub fn value_from_py(object: &Bound<'_, PyAny>) -> PyResult<Value> {
+     if object.is_none() {
+         return Ok(Value::Null);
+     }
+-    if let Ok(flag) = object.downcast::<PyBool>() {
++    if let Ok(flag) = object.cast::<PyBool>() {
+         return Ok(Value::Bool(flag.is_true()));
+     }
+-    if let Ok(int) = object.downcast::<PyInt>() {
++    if let Ok(int) = object.cast::<PyInt>() {
+         return Ok(Value::Number(int.extract::<i64>()?.into()));
+     }
+-    if let Ok(float) = object.downcast::<PyFloat>() {
++    if let Ok(float) = object.cast::<PyFloat>() {
+         // `inf` and `nan` have no JSON spelling, so they arrive as null rather
+         // than as a body no endpoint would accept.
+         return Ok(Number::from_f64(float.extract::<f64>()?).map_or(Value::Null, Value::Number));
+     }
+-    if let Ok(text) = object.downcast::<PyString>() {
++    if let Ok(text) = object.cast::<PyString>() {
+         return Ok(Value::String(text.to_str()?.to_owned()));
+     }
+-    if let Ok(dict) = object.downcast::<PyDict>() {
++    if let Ok(dict) = object.cast::<PyDict>() {
+         return Ok(Value::Object(map_from_py(dict)?));
+     }
+-    if object.downcast::<PyList>().is_ok() || object.downcast::<PyTuple>().is_ok() {
++    if object.cast::<PyList>().is_ok() || object.cast::<PyTuple>().is_ok() {
+         let mut items = Vec::new();
+         for item in object.try_iter()? {
+             items.push(value_from_py(&item?)?);
+@@ -105,7 +105,7 @@ pub fn optional_map(object: Option<&Bound<'_, PyAny>>) -> PyResult<Map<String, V
+     match object {
+         None => Ok(Map::new()),
+         Some(object) if object.is_none() => Ok(Map::new()),
+-        Some(object) => map_from_py(object.downcast::<PyDict>()?),
++        Some(object) => map_from_py(object.cast::<PyDict>()?),
+     }
+ }
+ 
+diff --git a/bindings/python/src/errors.rs b/bindings/python/src/errors.rs
+index 6581c5d..e516963 100644
+--- a/bindings/python/src/errors.rs
++++ b/bindings/python/src/errors.rs
+@@ -53,7 +53,7 @@ fn classes() -> &'static Classes {
+ 
+ /// Raise *error* as the Python class that stands for its variant.
+ pub fn to_py(error: Error) -> PyErr {
+-    Python::with_gil(|py| {
++    Python::attach(|py| {
+         let known = classes();
+         let built = match &error {
+             Error::Provider(message) => known.provider.bind(py).call1((message,)),
+@@ -160,6 +160,6 @@ pub trait Catch<T> {
+ 
+ impl<T> Catch<T> for PyResult<T> {
+     fn catch(self) -> kerness::error::Result<T> {
+-        self.map_err(|error| Python::with_gil(|py| from_py(py, &error)))
++        self.map_err(|error| Python::attach(|py| from_py(py, &error)))
+     }
+ }
+diff --git a/bindings/python/src/funcs.rs b/bindings/python/src/funcs.rs
+index 628cd7d..67e1bd5 100644
+--- a/bindings/python/src/funcs.rs
++++ b/bindings/python/src/funcs.rs
+@@ -87,9 +87,9 @@ pub fn retry(
+     // The sleeps happen in Rust, so the GIL is dropped for them: a caller
+     // retrying a slow network call has other threads to run meanwhile.
+     let callable = fn_.clone().unbind();
+-    py.allow_threads(|| {
++    py.detach(|| {
+         utils::retry(
+-            || Python::with_gil(|py| callable.bind(py).call0().map(Bound::unbind)),
++            || Python::attach(|py| callable.bind(py).call0().map(Bound::unbind)),
+             retries,
+             backoff_sec,
+             interval_sec,
+@@ -569,7 +569,7 @@ pub fn check_identity(saved: &Bound<'_, PyDict>, current: &Bound<'_, PyDict>) ->
+ }
+ 
+ /// Everything needed to continue a run.
+-#[pyclass(name = "SessionSnapshot", module = "kerness._core")]
++#[pyclass(name = "SessionSnapshot", module = "kerness._core", from_py_object)]
+ #[derive(Clone)]
+ pub struct PySessionSnapshot {
+     pub inner: SessionSnapshot,
+diff --git a/bindings/python/src/memory.rs b/bindings/python/src/memory.rs
+index da6fcd7..8714728 100644
+--- a/bindings/python/src/memory.rs
++++ b/bindings/python/src/memory.rs
+@@ -46,10 +46,10 @@ impl PyStore {
+     /// *scope* is `None` for methods that take no argument.
+     fn optional<T>(&self, method: &str, scope: Option<&str>) -> Option<T>
+     where
+-        T: for<'py> FromPyObject<'py>,
++        T: for<'a, 'py> FromPyObject<'a, 'py>,
+     {
+         let named = scope.unwrap_or_default();
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let store = self.inner.bind(py);
+             let called = match scope {
+                 Some(scope) => store.call_method1(method, (scope,)),
+@@ -60,6 +60,7 @@ impl PyStore {
+                 Ok(value) => match value.extract::<T>() {
+                     Ok(value) => Some(value),
+                     Err(error) => {
++                        let error: PyErr = error.into();
+                         kerness::logging::warning(&format!(
+                             "memory store {method}({named}) returned something \
+                              unusable; treating it as None: {error}"
+@@ -81,7 +82,7 @@ impl PyStore {
+ 
+ impl MemoryStore for PyStore {
+     fn read(&self, scope: &str) -> Result<String> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let value = self.inner.bind(py).call_method1("read", (scope,))?;
+             Ok(value.str()?.to_string_lossy().into_owned())
+         })
+@@ -89,7 +90,7 @@ impl MemoryStore for PyStore {
+     }
+ 
+     fn append(&self, scope: &str, note: &str) -> Result<()> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             self.inner
+                 .bind(py)
+                 .call_method1("append", (scope, note))
+@@ -99,11 +100,11 @@ impl MemoryStore for PyStore {
+     }
+ 
+     fn open(&self, scope: &str) -> Result<()> {
+-        Python::with_gil(|py| self.inner.bind(py).call_method1("open", (scope,)).map(drop)).catch()
++        Python::attach(|py| self.inner.bind(py).call_method1("open", (scope,)).map(drop)).catch()
+     }
+ 
+     fn revise(&self, scope: &str, old: &str, new: &str) -> Result<()> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             self.inner
+                 .bind(py)
+                 .call_method1("revise", (scope, old, new))
+@@ -125,7 +126,7 @@ impl MemoryStore for PyStore {
+     }
+ 
+     fn close(&self) -> Result<()> {
+-        Python::with_gil(|py| self.inner.bind(py).call_method0("close").map(drop)).catch()
++        Python::attach(|py| self.inner.bind(py).call_method0("close").map(drop)).catch()
+     }
+ 
+     fn maintenance_scopes(&self) -> Vec<String> {
+@@ -134,7 +135,7 @@ impl MemoryStore for PyStore {
+     }
+ 
+     fn maintain_scope(&self, scope: &str) -> Result<()> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let store = self.inner.bind(py);
+             if store.hasattr("maintain_scope")? {
+                 store.call_method1("maintain_scope", (scope,))?;
+@@ -145,7 +146,7 @@ impl MemoryStore for PyStore {
+     }
+ 
+     fn close_run(&self) -> Result<()> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let store = self.inner.bind(py);
+             let method = if store.hasattr("close_run")? {
+                 "close_run"
+@@ -169,13 +170,13 @@ pub fn bind_memory_store(object: &Bound<'_, PyAny>) -> PyResult<Option<Arc<dyn M
+     // Exact type only, for the reason `native_channel` takes the same care: a
+     // subclass overriding `read` is a caller's store that happens to inherit,
+     // and the shortcut past it would call the base the subclass exists to wrap.
+-    if let Ok(native) = object.downcast_exact::<PyFileMemory>() {
++    if let Ok(native) = object.cast_exact::<PyFileMemory>() {
+         return Ok(Some(native.get().inner.clone()));
+     }
+-    if let Ok(native) = object.downcast_exact::<PySummarizingMemory>() {
++    if let Ok(native) = object.cast_exact::<PySummarizingMemory>() {
+         return Ok(Some(native.get().inner.clone()));
+     }
+-    if let Ok(native) = object.downcast_exact::<PyCuratedMemory>() {
++    if let Ok(native) = object.cast_exact::<PyCuratedMemory>() {
+         return Ok(Some(native.get().inner.clone()));
+     }
+     Ok(Some(Arc::new(PyStore {
+diff --git a/bindings/python/src/provider.rs b/bindings/python/src/provider.rs
+index e8b37d9..c66abbd 100644
+--- a/bindings/python/src/provider.rs
++++ b/bindings/python/src/provider.rs
+@@ -530,7 +530,7 @@ impl Provider for PyProvider {
+         tools: Option<&[ToolSpec]>,
+         effort: ReasoningEffort,
+     ) -> Result<ProviderResponse> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let owner = self.owner.bind(py);
+             let messages = messages_to_py(py, messages)?;
+             // Both extras go as keywords, and only when the subclass can take
+@@ -550,7 +550,7 @@ impl Provider for PyProvider {
+     }
+ 
+     fn tool_dialect(&self) -> ToolDialect {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             self.owner
+                 .bind(py)
+                 .getattr("tool_dialect")
+@@ -560,7 +560,7 @@ impl Provider for PyProvider {
+     }
+ 
+     fn accepts_tools(&self) -> bool {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             self.owner
+                 .bind(py)
+                 .call_method0("_chat_accepts_tools")
+@@ -570,7 +570,7 @@ impl Provider for PyProvider {
+     }
+ 
+     fn effective_dialect(&self) -> ToolDialect {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             self.owner
+                 .bind(py)
+                 .call_method0("effective_dialect")
+@@ -583,7 +583,7 @@ impl Provider for PyProvider {
+     /// registry is the one that answers. A subclass that says nothing usable
+     /// leaves the session on its own `max_context_tokens`.
+     fn context_window(&self, model: &str) -> Option<usize> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             self.owner
+                 .bind(py)
+                 .call_method1("context_window", (model,))
+@@ -594,7 +594,7 @@ impl Provider for PyProvider {
+     }
+ 
+     fn note_native_tools_rejected(&self, error: &Error) -> bool {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let raised = to_py(error.clone()).into_value(py);
+             self.owner
+                 .bind(py)
+@@ -605,7 +605,7 @@ impl Provider for PyProvider {
+     }
+ 
+     fn note_reasoning_effort_rejected(&self, error: &Error) -> bool {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let raised = to_py(error.clone()).into_value(py);
+             self.owner
+                 .bind(py)
+@@ -623,7 +623,7 @@ impl Provider for PyProvider {
+         tools: Option<&[ToolSpec]>,
+         effort: ReasoningEffort,
+     ) -> Result<ProviderResponse> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let owner = self.owner.bind(py);
+             let kwargs = PyDict::new(py);
+             kwargs.set_item("purpose", purpose)?;
+@@ -647,7 +647,7 @@ impl Provider for PyProvider {
+         tools: Option<&[ToolSpec]>,
+         effort: ReasoningEffort,
+     ) -> Result<ProviderResponse> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let messages = messages_to_py(py, messages)?;
+             let tools = match tools.filter(|tools| !tools.is_empty()) {
+                 Some(tools) => tool_specs_to_py(py, tools)?.into_any(),
+@@ -726,7 +726,7 @@ impl HttpTransport for PyTransport {
+         headers: &Headers,
+         timeout_sec: u64,
+     ) -> Result<Value> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let header_dict = PyDict::new(py);
+             for (name, value) in headers {
+                 header_dict.set_item(name, value)?;
+@@ -765,7 +765,7 @@ pub fn http_post_json<'py>(
+     let payload = value_from_py(payload)?;
+     let headers = optional_headers(headers)?;
+     let response = py
+-        .allow_threads(|| UreqTransport.post_json(url, &payload, &headers, timeout))
++        .detach(|| UreqTransport.post_json(url, &payload, &headers, timeout))
+         .raise()?;
+     value_to_py(py, &response)
+ }
+diff --git a/bindings/python/src/run.rs b/bindings/python/src/run.rs
+index 7ae2e45..43c0613 100644
+--- a/bindings/python/src/run.rs
++++ b/bindings/python/src/run.rs
+@@ -51,7 +51,7 @@ impl ContextToolHandler for PyContextHandler {
+         let Some(callable) = &self.preflight else {
+             return Ok(None);
+         };
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let result = callable.bind(py).call1((
+                 map_to_py(py, arguments)?,
+                 serialized(py, serde_json::to_value(identity))?,
+@@ -68,7 +68,7 @@ impl ContextToolHandler for PyContextHandler {
+     }
+ 
+     fn call(&self, arguments: &Arguments, context: &ToolContext) -> kerness::Result<String> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let context = Py::new(
+                 py,
+                 PyToolContext {
+@@ -91,7 +91,7 @@ pub(crate) struct PyEventSink {
+ 
+ impl EventSink for PyEventSink {
+     fn emit(&self, event: &RunEvent) -> kerness::Result<()> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             self.callable
+                 .bind(py)
+                 .call1((serialized(py, serde_json::to_value(event))?,))
+@@ -163,7 +163,7 @@ impl PyToolContext {
+                     .map_err(|error| PyValueError::new_err(error.to_string()))
+             })
+             .transpose()?;
+-        py.allow_threads(|| self.inner.run_command(command, cwd.as_deref(), timeout))
++        py.detach(|| self.inner.run_command(command, cwd.as_deref(), timeout))
+             .raise()
+     }
+ }
+@@ -206,7 +206,7 @@ impl PySessionRun {
+                 .map_err(|error| PyValueError::new_err(error.to_string()))?,
+             None => RunInput::Continue,
+         };
+-        let result = py.allow_threads(|| self.inner.step(input));
++        let result = py.detach(|| self.inner.step(input));
+         if let Some(raised) = self.channel.as_ref().and_then(|channel| channel.parked()) {
+             return Err(raised);
+         }
+diff --git a/bindings/python/src/runtime.rs b/bindings/python/src/runtime.rs
+index ae553b5..a2eb00b 100644
+--- a/bindings/python/src/runtime.rs
++++ b/bindings/python/src/runtime.rs
+@@ -172,7 +172,7 @@ impl PyToolDispatcher {
+         // yields no tools, and the call comes back as "Unknown tool" — an
+         // error the model is shown and can act on.
+         let tools_for: ToolsFor = Arc::new(move || {
+-            Python::with_gil(|py| {
++            Python::attach(|py| {
+                 lookup
+                     .bind(py)
+                     .call0()
+@@ -519,7 +519,7 @@ impl PyAgentRunner {
+ // ------------------------------------------------------------------ LoopState
+ 
+ /// Everything the loop tracks across turns.
+-#[pyclass(name = "LoopState", module = "kerness._core")]
++#[pyclass(name = "LoopState", module = "kerness._core", from_py_object)]
+ #[derive(Clone, Default)]
+ pub struct PyLoopState {
+     pub inner: LoopState,
+diff --git a/bindings/python/src/session.rs b/bindings/python/src/session.rs
+index 1310740..1dc99f5 100644
+--- a/bindings/python/src/session.rs
++++ b/bindings/python/src/session.rs
+@@ -163,7 +163,7 @@ struct PyHandler {
+ impl ToolHandler for PyHandler {
+     fn call(&self, arguments: &Arguments, _actor: &str) -> kerness::Result<String> {
+         use crate::errors::Catch;
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let arguments = map_to_py(py, arguments)?;
+             let value = self.callable.bind(py).call1((arguments,))?;
+             Ok(value.str()?.to_string_lossy().into_owned())
+@@ -188,7 +188,7 @@ impl MemoryFilter for PyFilter {
+     /// Silence would make that indistinguishable from a filter that returned
+     /// `None` on purpose, so the failure is logged.
+     fn filter(&self, note: &str, actor: &str) -> Option<String> {
+-        Python::with_gil(|py| match self.callable.bind(py).call1((note, actor)) {
++        Python::attach(|py| match self.callable.bind(py).call1((note, actor)) {
+             Ok(value) if value.is_none() => None,
+             Ok(value) => Some(value.str().ok()?.to_string_lossy().into_owned()),
+             Err(error) => {
+@@ -210,7 +210,7 @@ fn bind_memory_filter(filter: Option<Py<PyAny>>) -> PyResult<Option<Arc<dyn Memo
+     let Some(callable) = filter else {
+         return Ok(None);
+     };
+-    let verdict = Python::with_gil(|py| -> PyResult<bool> {
++    let verdict = Python::attach(|py| -> PyResult<bool> {
+         let bound = callable.bind(py);
+         if bound.is_none() {
+             return Ok(false);
+@@ -239,7 +239,7 @@ struct PySource {
+ impl ContextSource for PySource {
+     fn render(&self, agent: &str) -> kerness::Result<String> {
+         use crate::errors::Catch;
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let value = self.callable.bind(py).call1((agent,))?;
+             Ok(value.str()?.to_string_lossy().into_owned())
+         })
+@@ -659,7 +659,7 @@ impl PySession {
+                 .map_err(|error| PyValueError::new_err(error.to_string()))?;
+         }
+         if let Some(callable) = event_sink {
+-            Python::with_gil(|py| require_callable(callable.bind(py), "event_sink"))?;
++            Python::attach(|py| require_callable(callable.bind(py), "event_sink"))?;
+             options.event_sink = Some(Arc::new(PyEventSink { callable }));
+         }
+         self.prepared()?;
+diff --git a/bindings/python/src/skill.rs b/bindings/python/src/skill.rs
+index 794745c..22def2e 100644
+--- a/bindings/python/src/skill.rs
++++ b/bindings/python/src/skill.rs
+@@ -25,7 +25,7 @@ fn bind_grant(object: Option<&Bound<'_, PyAny>>) -> Option<GrantPaths> {
+         // The grant is an effect, not a decision: a hook that raises has failed
+         // to widen access, which leaves the session exactly as restricted as it
+         // was. Turning that into a failed run would be worse than the refusal.
+-        let _ = Python::with_gil(|py| -> PyResult<()> {
++        let _ = Python::attach(|py| -> PyResult<()> {
+             let listed: Vec<Py<PyAny>> = paths
+                 .iter()
+                 .map(|path| path_to_py(py, path.to_string_lossy().as_ref()))
+@@ -93,7 +93,7 @@ impl PySkillRegistry {
+         // same position an agent that declared none is in — the alternative is
+         // failing a turn over a prompt section.
+         let skills_for: SkillsFor = Arc::new(move |name: &str| {
+-            Python::with_gil(|py| {
++            Python::attach(|py| {
+                 lookup
+                     .bind(py)
+                     .call1((name,))
+diff --git a/bindings/python/src/types.rs b/bindings/python/src/types.rs
+index 1a90c50..79a6210 100644
+--- a/bindings/python/src/types.rs
++++ b/bindings/python/src/types.rs
+@@ -66,7 +66,7 @@ pub fn dialect_from_py(object: &Bound<'_, PyAny>) -> PyResult<ToolDialect> {
+ // ------------------------------------------------------------------- ToolCall
+ 
+ /// A call the model asked for.
+-#[pyclass(name = "ToolCall", module = "kerness._core", frozen)]
++#[pyclass(name = "ToolCall", module = "kerness._core", frozen, from_py_object)]
+ #[derive(Clone)]
+ pub struct PyToolCall {
+     pub inner: ToolCall,
+@@ -127,7 +127,7 @@ struct PyHandler {
+ 
+ impl ToolHandler for PyHandler {
+     fn call(&self, arguments: &Arguments, actor: &str) -> kerness::Result<String> {
+-        Python::with_gil(|py| {
++        Python::attach(|py| {
+             let arguments = map_to_py(py, arguments)?;
+             let callable = self.callable.bind(py);
+             let value = if self.takes_actor {
+@@ -145,10 +145,10 @@ impl ToolHandler for PyHandler {
+ ///
+ /// A list becomes a comma-joined string, which is what `list_dir` produces.
+ fn stringify(value: &Bound<'_, PyAny>) -> PyResult<String> {
+-    if let Ok(text) = value.downcast::<PyString>() {
++    if let Ok(text) = value.cast::<PyString>() {
+         return Ok(text.to_str()?.to_owned());
+     }
+-    if value.downcast::<PyList>().is_ok() || value.downcast::<PyTuple>().is_ok() {
++    if value.cast::<PyList>().is_ok() || value.cast::<PyTuple>().is_ok() {
+         let mut parts = Vec::new();
+         for item in value.try_iter()? {
+             parts.push(item?.str()?.to_string_lossy().into_owned());
+@@ -177,7 +177,7 @@ impl PyToolHandler {
+ }
+ 
+ /// A tool an agent may call.
+-#[pyclass(name = "ToolSpec", module = "kerness._core", frozen)]
++#[pyclass(name = "ToolSpec", module = "kerness._core", frozen, from_py_object)]
+ pub struct PyToolSpec {
+     pub inner: ToolSpec,
+     /// Kept so `spec.handler` hands back the object the caller registered.
+@@ -186,7 +186,7 @@ pub struct PyToolSpec {
+ 
+ impl Clone for PyToolSpec {
+     fn clone(&self) -> Self {
+-        Python::with_gil(|py| PyToolSpec {
++        Python::attach(|py| PyToolSpec {
+             inner: self.inner.clone(),
+             handler: self.handler.clone_ref(py),
+         })
+@@ -292,7 +292,13 @@ pub fn pybool(flag: bool) -> &'static str {
+ // ----------------------------------------------------------------- ToolResult
+ 
+ /// What a tool call produced.
+-#[pyclass(name = "ToolResult", module = "kerness._core", frozen, get_all)]
++#[pyclass(
++    name = "ToolResult",
++    module = "kerness._core",
++    frozen,
++    get_all,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyToolResult {
+     pub name: String,
+@@ -351,7 +357,7 @@ impl PyToolResult {
+ // ----------------------------------------------------------- ProviderResponse
+ 
+ /// One reply from a provider, normalized across backends.
+-#[pyclass(name = "ProviderResponse", module = "kerness._core")]
++#[pyclass(name = "ProviderResponse", module = "kerness._core", from_py_object)]
+ pub struct PyProviderResponse {
+     pub inner: ProviderResponse,
+     /// The decoded payload as the caller's own object, which for a pydantic
+@@ -361,7 +367,7 @@ pub struct PyProviderResponse {
+ 
+ impl Clone for PyProviderResponse {
+     fn clone(&self) -> Self {
+-        Python::with_gil(|py| PyProviderResponse {
++        Python::attach(|py| PyProviderResponse {
+             inner: self.inner.clone(),
+             structured: self.structured.as_ref().map(|object| object.clone_ref(py)),
+         })
+@@ -484,7 +490,7 @@ impl PyProviderResponse {
+ // -------------------------------------------------------------- Message, Turn
+ 
+ /// One entry in the public transcript.
+-#[pyclass(name = "Message", module = "kerness._core")]
++#[pyclass(name = "Message", module = "kerness._core", from_py_object)]
+ #[derive(Clone)]
+ pub struct PyMessage {
+     pub inner: Message,
+@@ -563,7 +569,7 @@ impl PyMessage {
+ }
+ 
+ /// One entry in what the model is shown.
+-#[pyclass(name = "Turn", module = "kerness._core", frozen)]
++#[pyclass(name = "Turn", module = "kerness._core", frozen, from_py_object)]
+ #[derive(Clone)]
+ pub struct PyTurn {
+     pub inner: Turn,
+@@ -925,7 +931,7 @@ impl PyAgent {
+     }
+ 
+     fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+-        let Ok(other) = other.downcast::<PyAgent>() else {
++        let Ok(other) = other.cast::<PyAgent>() else {
+             return false;
+         };
+         let other = other.borrow();
+@@ -1022,7 +1028,13 @@ impl PyMemory {
+ // -------------------------------------------------------------- PersonaConfig
+ 
+ /// A persona file's four sections.
+-#[pyclass(name = "PersonaConfig", module = "kerness._core", get_all, set_all)]
++#[pyclass(
++    name = "PersonaConfig",
++    module = "kerness._core",
++    get_all,
++    set_all,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyPersonaConfig {
+     pub name: String,
+@@ -1086,7 +1098,13 @@ impl PyPersonaConfig {
+ // ----------------------------------------------------------------- RoleConfig
+ 
+ /// A role file: its frontmatter, and the prompt its body is.
+-#[pyclass(name = "RoleConfig", module = "kerness._core", get_all, set_all)]
++#[pyclass(
++    name = "RoleConfig",
++    module = "kerness._core",
++    get_all,
++    set_all,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyRoleConfig {
+     pub name: String,
+@@ -1149,7 +1167,7 @@ impl PyRoleConfig {
+ // ---------------------------------------------------------------- SkillConfig
+ 
+ /// One `SKILL.md` file.
+-#[pyclass(name = "SkillConfig", module = "kerness._core")]
++#[pyclass(name = "SkillConfig", module = "kerness._core", from_py_object)]
+ #[derive(Clone)]
+ pub struct PySkillConfig {
+     pub inner: SkillConfig,
+@@ -1307,7 +1325,13 @@ pub fn path_to_py(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
+ // -------------------------------------------------------------- harness specs
+ 
+ /// Whether the harness demands an orchestrator, and what to tell it.
+-#[pyclass(name = "OrchestratorSpec", module = "kerness._core", frozen, get_all)]
++#[pyclass(
++    name = "OrchestratorSpec",
++    module = "kerness._core",
++    frozen,
++    get_all,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyOrchestratorSpec {
+     pub required: bool,
+@@ -1341,7 +1365,13 @@ impl PyOrchestratorSpec {
+ }
+ 
+ /// How many participants the harness accepts.
+-#[pyclass(name = "ParticipantSpec", module = "kerness._core", frozen, get_all)]
++#[pyclass(
++    name = "ParticipantSpec",
++    module = "kerness._core",
++    frozen,
++    get_all,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyParticipantSpec {
+     pub min: i64,
+@@ -1371,7 +1401,13 @@ impl PyParticipantSpec {
+ }
+ 
+ /// The cast the harness expects.
+-#[pyclass(name = "AgentsSpec", module = "kerness._core", frozen, get_all)]
++#[pyclass(
++    name = "AgentsSpec",
++    module = "kerness._core",
++    frozen,
++    get_all,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyAgentsSpec {
+     pub orchestrator: PyOrchestratorSpec,
+@@ -1414,7 +1450,13 @@ impl PyAgentsSpec {
+ }
+ 
+ /// One named stage of the run.
+-#[pyclass(name = "PhaseSpec", module = "kerness._core", frozen, get_all)]
++#[pyclass(
++    name = "PhaseSpec",
++    module = "kerness._core",
++    frozen,
++    get_all,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyPhaseSpec {
+     pub name: String,
+@@ -1465,7 +1507,7 @@ impl PyPhaseSpec {
+ }
+ 
+ /// The loop's limits, phases, and termination tokens.
+-#[pyclass(name = "LoopSpec", module = "kerness._core", frozen)]
++#[pyclass(name = "LoopSpec", module = "kerness._core", frozen, from_py_object)]
+ #[derive(Clone)]
+ pub struct PyLoopSpec {
+     pub inner: LoopSpec,
+@@ -1576,7 +1618,13 @@ fn phase_spec(spec: &PhaseSpec) -> PyPhaseSpec {
+ }
+ 
+ /// One field of the declared result shape.
+-#[pyclass(name = "ResultField", module = "kerness._core", frozen, get_all)]
++#[pyclass(
++    name = "ResultField",
++    module = "kerness._core",
++    frozen,
++    get_all,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyResultField {
+     pub name: String,
+@@ -1632,12 +1680,12 @@ impl PyResultField {
+             ResultType::List => "list",
+             ResultType::Dict => "dict",
+         };
+-        Ok(py.import("builtins")?.getattr(name)?.downcast_into()?)
++        Ok(py.import("builtins")?.getattr(name)?.cast_into()?)
+     }
+ }
+ 
+ /// The machine-readable contract a gameplan declares.
+-#[pyclass(name = "HarnessSpec", module = "kerness._core", frozen)]
++#[pyclass(name = "HarnessSpec", module = "kerness._core", frozen, from_py_object)]
+ #[derive(Clone)]
+ pub struct PyHarnessSpec {
+     pub inner: HarnessSpec,
+@@ -1775,7 +1823,7 @@ impl PyHarnessSpec {
+ }
+ 
+ /// What a session may use once the harness has narrowed what it registered.
+-#[pyclass(name = "Permitted", module = "kerness._core", frozen)]
++#[pyclass(name = "Permitted", module = "kerness._core", frozen, from_py_object)]
+ #[derive(Clone)]
+ pub struct PyPermitted {
+     pub inner: Permitted,
+@@ -1849,7 +1897,12 @@ fn agents_spec(spec: &AgentsSpec) -> PyAgentsSpec {
+ // ------------------------------------------------------------- GameplanConfig
+ 
+ /// One gameplan file: its contract, its prose, and where it came from.
+-#[pyclass(name = "GameplanConfig", module = "kerness._core", frozen)]
++#[pyclass(
++    name = "GameplanConfig",
++    module = "kerness._core",
++    frozen,
++    from_py_object
++)]
+ #[derive(Clone)]
+ pub struct PyGameplanConfig {
+     pub inner: GameplanConfig,
+@@ -1956,7 +2009,7 @@ pub fn optional_headers(object: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<(Stri
+     let Some(object) = object.filter(|object| !object.is_none()) else {
+         return Ok(Vec::new());
+     };
+-    Ok(map_from_py(object.downcast::<PyDict>()?)?
++    Ok(map_from_py(object.cast::<PyDict>()?)?
+         .into_iter()
+         .map(|(key, value)| {
+             let text = match value {

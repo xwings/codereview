@@ -1,306 +1,109 @@
-# `review.py` — PR/Issue Review Tool
+# codereview
 
-## Purpose
+## Mission
 
-A maintainer-facing CLI that hands a PR or issue from any GitHub repository to
-a panel of LLM reviewers for a code-quality and design-fit review, then posts
-the verdict back to GitHub. It augments — never replaces — maintainer judgment.
+Review GitHub pull requests and answer issues using the target project's
+architecture and source. A specialist panel investigates, challenges its own
+conclusions, and produces one evidence-backed report for a maintainer.
+PR reviewers each cast a merge recommendation; the tool never merges.
 
-`--repo` says which repository, and is required — the tool has no home project
-and plays no favourites. What the panel knows about a given project lives in
-`prompts/repos/<owner>/<name>/`, so onboarding a repo is a directory, not a code
-change; a repo without one is reviewed against the generic rubric in
-`prompts/default/`, which is a real review rather than a degraded one. No
-profile ships. See [Repo profiles](#repo-profiles).
-
-The panel is seven specialists plus a chair, one specialist per check the
-maintainer cares about:
-
-| # | Check | Seat |
-| - | ----- | ---- |
-| 1 | Coding style per language (Python 4 spaces, C tabs, …) | Style |
-| 2 | Naming conventions taken from the project itself | Naming |
-| 3 | Near-duplicate functions — merge or refactor instead? | Duplication |
-| 4 | Code quality; dead code, filler AI-generated comments | Quality |
-| 5 | Does this fit the project, and make it better rather than worse? | Fit |
-| 6 | New packages: maintained? supply-chain exposure? worth it? | Dependencies |
-| 7 | Security bugs; does it make the project more vulnerable? | Security |
-
-They read the project *before* they read the diff, then argue, then re-walk all
-seven checks and confirm or withdraw every finding before anything is posted.
-See [harness.md](ARCHITECTURE/harness.md) for the phases.
-
-**Core languages: Python, C, C++ and Rust.** Each is first-class in the parts
-of the tool that are language-aware — a measured indentation convention and a
-repo baseline for check 1 (`repo_facts.INDENT_LANGS`), a symbol extractor
-feeding check 3 (`repo_facts._symbols`), and a section in
-`prompts/coding_styles.md`. A PR in any other language is still reviewed: the
-panel derives the convention from the tree in `study_repo`, which is the same
-thing it is told to do for these four when the file and the tree disagree. What
-it loses is the measured leads — checks 1 and 3 start from nothing.
-
-> **⚠ Needs kerness from `dev`, not the released wheel.** Getting all seven
-> seats a turn took three fixes to the orchestrator loop itself; without them
-> the chair stalls in the first phase and then writes a seven-check verdict
-> covering seats that never spoke. `review.py` refuses to post such a run, so
-> the failure is safe, but it is not a review. Cause and fixes are in
-> [harness.md](ARCHITECTURE/harness.md#why-the-chair-drives-the-rotation-and-how-it-used-to-fail);
-> the build is under [Target environment](#target-environment).
+Every repository is treated equally. `--repo` is required. The target's source
+and architecture are authoritative; optional repository profiles supplement
+them. No project-specific profile ships.
 
 ## Target environment
 
-Linux/WSL with Python 3.10+, one dependency
-([kerness](https://github.com/xwings/kerness), the multi-agent harness — see
-`requirements.txt`), an authenticated `gh` CLI, and an OpenAI-compatible LLM
-endpoint. Nothing about the machine is project-specific; see
-[git-io.md](ARCHITECTURE/git-io.md) for how the branch a review is measured
-against is resolved per repo.
+Linux or macOS, Python 3.10+, `git`, authenticated `gh`, and an OpenAI-compatible
+model endpoint. Installing the pinned kerness Rust extension also needs a Rust
+toolchain and a C linker. See [README.md](README.md) for setup and invocation.
 
-kerness is not on PyPI, and the released wheel predates the orchestrator fixes
-the panel depends on. Build it from its `dev` branch, into a working clone this
-repo keeps beside it — `vendor/` is gitignored, and kerness stays its own
-repository rather than becoming a gitlink in this one.
-
-```sh
-python3 -m venv .venv
-git clone -b dev git@github.com:xwings/kerness.git vendor/kerness
-.venv/bin/pip install maturin
-cd vendor/kerness/bindings/python && ../../../../.venv/bin/maturin develop --release
-cd ../../../.. && .venv/bin/python -m kerness.selfcheck   # expect "OK: all core checks passed"
-```
-
-## Invocation
-
-```
-./review.py <kind> <number> --repo REPO --api-key KEY --api-base URL --llm-model NAME
-
-# examples
-./review.py pr 7 --repo user/repo --llm-model gpt-5.6-luna --dry-run
-./review.py issue 12 --repo https://github.com/user/repo --llm-model gpt-5.6-luna
-./review.py pr 7 --repo git@github.com:user/repo.git --llm-model gpt-5.6-luna
-```
-
-- `<kind>`    — `pr` or `issue`
-- `<number>`  — GitHub PR or issue number on the repo named by `--repo`
-
-> **Breaking changes.** The old `<backend>` positional (`claude` / `codex`) is
-> gone, along with the `reviewers/` package it selected: `./review.py claude pr
-> 1233` is now `./review.py pr 1233 --repo <r> --llm-model <name>`. `--repo`
-> itself used to carry a default repository and is now required — the tool
-> reviews whatever it is pointed at and assumes no home project.
-
-Required:
-
-- `--repo REPO`        the repository to review. Accepts `OWNER/NAME` or any
-                       github.com URL form — `github.com/o/n`,
-                       `https://github.com/o/n[.git]`, `git@github.com:o/n.git`.
-                       Other hosts are refused: every GitHub call goes through
-                       `gh` (guardrail 1). No default, deliberately — a tool
-                       that reviews one project by default is not a generic one.
-
-Also required, each with an environment fallback so the key need not appear in
-shell history:
-
-- `--api-key KEY`      — or `$REVIEW_API_KEY`
-- `--llm-model NAME`   — or `$REVIEW_MODEL`
-- `--api-base URL`     — or `$REVIEW_API_BASE` (default: `https://api.openai.com/v1`)
-
-**The API key is never persisted.** It is held in memory for the run: kerness is
-constructed with `session_file=None`, the key is not logged, not written to
-`--transcript`, and not stored anywhere on disk by this tool.
-
-Optional flags:
-
-- `--prompts PATH`      knowledge directory for this run, overriding the
-                        `prompts/repos/` lookup ([Repo profiles](#repo-profiles))
-- `--base-branch NAME`  branch to reset the checkout to, overriding the
-                        PR's own base and the profile's pin
-- `--dry-run`           run the review but print the result instead of posting
-- `--allow-approve`     allow posting a real GitHub approval when the panel
-                        proposes one; without it, approvals are posted as
-                        comments with a note
-- `--workdir PATH`      where to clone/checkout PRs (default: `./repo`)
-- `--timeout SECONDS`   per-request HTTP timeout (default: 180)
-- `--max-turns N`       override the gameplan's turn ceiling
-- `--transcript PATH`   also write the panel transcript to a file
-
-## Hard guardrails
-
-These are constraints the script enforces in code, not just convention:
-
-1. **All GitHub interaction goes through the `gh` CLI.** No direct REST/GraphQL
-   calls, no `requests`/`httpx` to `api.github.com`, no PyGithub. Reasons:
-   (a) reuses the maintainer's existing `gh auth login` so we never handle
-   tokens, (b) one consistent audit surface for the deny-list. Enforced in
-   [github-io.md](ARCHITECTURE/github-io.md).
-2. **PR review always uses a fresh local branch.** The script refuses to run
-   if the clone has uncommitted changes, and it always creates a new
-   branch named `review/pr-<n>-<shortsha>` via `gh pr checkout`. Enforced in
-   [git-io.md](ARCHITECTURE/git-io.md).
-3. **No tests are executed.** The script never invokes `pytest`, `make`,
-   build commands, or arbitrary scripts from the PR — and neither can the
-   panel: kerness only exposes tools the gameplan declares, and
-   `gameplans/pr_review.md` never declares `cmd`, so there is no path from PR
-   content to a subprocess ([harness.md](ARCHITECTURE/harness.md)). File reads
-   are confined to the checkout by a default-deny `AccessPolicy`. CI handles
-   correctness.
-4. **No merges, ever.** The only PR-write actions used are
-   `gh pr review --approve` and `gh pr review --comment`. `gh pr merge` is
-   never called and is explicitly blocked. Real approvals additionally
-   require the `--allow-approve` flag.
-5. **No issue closures.** The only issue-write action is `gh issue comment`.
-   `gh issue close` is never called and is explicitly blocked.
-6. **No pushes to the target remote.** The local branch stays local. `git
-   push` (in any argv form, e.g. `git -C <dir> push`) is blocked, as are
-   `gh api` and `gh repo sync`.
-
-The deny-list wrapping every `gh`/`git` subprocess lives in
-[github-io.md](ARCHITECTURE/github-io.md), so a future contributor who adds
-a feature can't silently break rules 1, 4, 5, or 6.
-
-## Repo profiles
-
-What the panel *knows* about a project is per-repo; the seven checks and the
-harness are not. That knowledge is a directory:
-
-```
-prompts/
-├── coding_styles.md                 ← shared by every repo
-├── default/                         ← the generic fallback profile
-│   ├── ARCHITECTURE.md              ← "no curated map — build one from the tree"
-│   ├── design.md                    ← project-agnostic rubric
-│   └── profile.json                 ← {} — no base-branch pin
-└── repos/                           ← empty: no profile ships
-    ├── README.md                    ← the layout, and what belongs in each file
-    └── <owner>/<name>/              ← yours, when you write one
-        ├── ARCHITECTURE.md          ← the project's layering and API surface
-        ├── design.md                ← the maintainer's rubric
-        └── profile.json             ← {"base_branch": "..."}
-```
-
-Resolution (`review.py:142`, `resolve_profile`): `--prompts DIR` if given, else
-`prompts/repos/<owner>/<name>/` if it exists, else `prompts/default/`. The
-chosen profile is printed to stderr, so a run on the generic rubric never looks
-curated.
-
-Each file is looked up along **profile → `default/` → `prompts/`**
-(`review.py:189`), so a profile carries only what it wants to say.
-`coding_styles.md` stays shared unless a project overrides it — a project
-outside the four core languages would.
-
-To onboard a repo: create `prompts/repos/<owner>/<name>/`, write `design.md`
-(and optionally `ARCHITECTURE.md`, `coding_styles.md`, `profile.json`). No
-Python changes.
-
-**`prompts/default/design.md` is not decorative — it is the common case.** The
-tool ships no profile, so every review starts here until someone writes one.
-That is also why no project's rubric may be the fallback: a panel handed one
-project's layering rules and pointed at another would enforce them against code
-that has none, and `require_completed_panel` would not catch it — a review that
-reads authoritative and is wrong. The generic rubric defines the severity
-vocabulary and approve threshold (the tool depends on both) and tells the panel
-to derive conventions from the tree in `study_repo` rather than from the file.
-
-## High-level flow
-
-```
-                ┌────────────────────────┐
-   args ───────▶│  argparse + validation │
-                │  normalize --repo URL  │
-                │  resolve repo profile  │
-                └──────────┬─────────────┘
-                           │
-              ┌────────────┴────────────┐
-              ▼                         ▼
-       kind == "pr"               kind == "issue"
-              │                         │
-              ▼                         ▼
-   ┌──────────────────┐       ┌──────────────────┐
-   │ fetch PR via gh  │       │ fetch issue + cmts│
-   │ checkout new br. │       │  via gh           │
-   │ collect diff +   │       └────────┬──────────┘
-   │ touched files    │                │
-   └────────┬─────────┘                │
-            ▼                          │
-   ┌──────────────────┐                │
-   │ repo_facts:      │                │
-   │ measure indent,  │                │
-   │ symbols, deps    │                │
-   └────────┬─────────┘                │
-            │                          │
-            └────────────┬─────────────┘
-                         ▼
-            ┌────────────────────────┐
-            │ build session topic    │
-            │  (architecture+rubric+ │
-            │   styles+facts+case)   │
-            └────────────┬───────────┘
-                         ▼
-            ┌────────────────────────┐
-            │ kerness panel          │
-            │  study_repo            │
-            │  → review_pr           │
-            │  → cross_check         │
-            │  → verify (rethink)    │
-            └────────────┬───────────┘
-                         ▼
-            ┌────────────────────────┐
-            │ typed result fields    │
-            │  verdict, review_body, │
-            │  findings, checklist   │
-            │  (empty body → abort)  │
-            └────────────┬───────────┘
-                         ▼
-            ┌────────────────────────┐
-            │ post via gh            │
-            │  pr  → review (appr/cm)│
-            │  iss → comment         │
-            └────────────────────────┘
-```
+The sole Python dependency is kerness, built using the README commands from public revision
+`7c97dcb4e50a8fd05d05185b0052ba1356be016a` with the tracked PyO3 compatibility
+and security patch. `requirements.txt` records the installed package version.
+Runtime uses its strict session API. `vendor/kerness/` is an optional development
+checkout, not a required local-only dependency. The eatmycode specification is
+fetched from upstream on every invocation; offline or unsupported specification
+changes stop preflight.
 
 ## Workspace layout
 
-```
-codereview/
-├── ARCHITECTURE.md             ← this file (AGENT.md, CLAUDE.md symlink to it)
-├── ARCHITECTURE/               ← per-subsystem module docs (see Index)
-├── .gitignore                  ← ignores .claude/, .codex/, repo/, vendor/, .venv/, __pycache__/
-├── requirements.txt            ← kerness (the only dependency)
-├── review.py                   ← CLI entry point (argparse, topic, verdict, posting)
-├── session_builder.py          ← builds the kerness Session: provider, agents, policy, tools
-├── repo_facts.py               ← deterministic pre-pass feeding checks 1, 3, 6
-├── agent_tools.py              ← repo_grep, package_health, github_repo_health
-├── github_io.py                ← all `gh` interactions (fetch, post, deny-list)
-├── git_io.py                   ← clone, dirty-tree guard, fresh branch checkout
-├── gameplans/
-│   ├── pr_review.md            ← harness contract: 7 seats, 4 phases, result schema
-│   └── issue_triage.md         ← harness contract: 2 seats, 2 phases
-├── personas/                   ← one file per seat (7 PR + 2 issue + chair)
-├── prompts/                    ← see [Repo profiles](#repo-profiles)
-│   ├── coding_styles.md        ← check 1's ground truth, per language (shared)
-│   ├── default/                ← generic fallback: ARCHITECTURE, design, profile
-│   └── repos/<owner>/<name>/   ← per-repo knowledge; empty, none ships
-├── repo/                       ← (gitignored) script-managed clone of the target
-└── vendor/kerness/             ← (gitignored) kerness `dev` clone the wheel is built from
-```
+| Path | Ownership |
+| ---- | --------- |
+| `code.sh`, `review.py` | Launcher and workflow coordination |
+| `patches/` | Upstream compatibility patch and dependency build provenance |
+| `architecture.py` | Latest eatmycode specification and architecture preparation |
+| `panel_runtime.py`, `session_builder.py` | Session contracts, participation, ballots and progress |
+| `reporting.py` | Report validation, approval gate and Markdown rendering |
+| `repo_facts.py`, `agent_tools.py` | Measured facts and read-only panel tools |
+| `git_io.py`, `github_io.py` | Managed checkouts and GitHub CLI boundary |
+| `gameplans/`, `personas/`, `prompts/` | Panel phases, specialist roles, optional review knowledge |
+| `tests/` | Offline behavioral and integration checks |
+| `repo/` | Ignored managed clones and retained `.reviews/` worktrees |
+| `vendor/` | Ignored upstream specification and optional kerness checkout |
 
-Rationale: the GitHub I/O and the panel are the two sides that change
-independently. Who reviews and how is declared in `gameplans/` and `personas/`
-and needs no Python change; what the panel knows about a specific project is
-tuned in `prompts/repos/<owner>/<name>/`, also with no Python change.
+`AGENT.md`, `AGENTS.md` and `CLAUDE.md` point here. The module Index owns subsystem details;
+keep those details out of this control center.
 
-## What's intentionally out of scope (v1)
+## Entry flow
 
-- Running tests, builds, linters, type-checkers locally
-- Inline review comments on specific lines (just a single review body for now)
-- Multi-PR or batch mode
-- Any kind of caching of past reviews
-- Pushing branches anywhere
-- Auto-merging, auto-closing, label management
-- GitHub Enterprise or any host other than github.com
-- Generating a repo's profile automatically from its tree
-- First-class support for languages beyond Python, C, C++ and Rust — others are
-  reviewed, but with no measured leads for checks 1 and 3
+1. `code.sh` selects `.venv/bin/python` (or legacy `venv/bin/python`) and forwards
+   arguments to `review.py` without changing the caller's working directory or
+   processing its output. `review.py` parses `--id NUMBER` for automatic routing;
+   legacy positional `auto|pr|issue NUMBER` remains supported.
+2. Validate credentials/options, refresh eatmycode, and prepare documentation
+   against the configured/default branch before identifying the target kind.
+3. Confirm whether the number is a PR or issue. `--id` routes it; an incorrect
+   explicit `pr` or `issue` exits with the actual kind.
+4. A PR gets a fresh review branch, an immutable source worktree and a second
+   documentation audit of its own head. An issue uses the baseline source and
+   audited documentation. Generated guides occupy separate local worktrees;
+   original source remains the citation authority.
+5. Run the appropriate panel. Every specialist studies architecture, owning
+   module documents and complete related source before reaching conclusions.
+6. Check actual participation, strict result fields, citations and ballots.
+   Print one report; post through `gh` unless `--dry-run`. A PR changing during
+   review invalidates the result before posting.
+
+The PR panel has language/tooling, API design, refactoring, senior engineering,
+architecture, supply-chain and security specialists. Each participates in
+study, review, debate, verification and voting. The chair records its own
+vote after hearing everyone. Approval requires all eight merge votes, seven
+passing checks, justified need, no major/blocker findings, an open non-draft
+PR and an approving rubric verdict. `--allow-approve` additionally controls
+whether GitHub receives an approval or a comment.
+
+## Hard guardrails
+
+- All GitHub service access goes through `github_io.gh`; target/specification
+  git transport goes through `git_io.git`. No raw GitHub API writes.
+- Never merge, close a PR/issue, push, or apply labels. Known command forms are
+  denied centrally; available writes are PR reviews and issue comments only.
+- Never execute target tests, builds or scripts. Panel gameplans expose no
+  command, shell, write or memory-write tool. Local project-development tests
+  are distinct from reviewing an untrusted target.
+- Panel file access is confined to its source checkout, explicitly allowed
+  generated guide files and an optional caller-selected transcript path.
+- Generated documentation is applied only to retained local worktrees after
+  validation, with rollback on write failure. It is never pushed or committed.
+- Preserve dirty managed clones and existing durable agent guidance. Do not
+  reset uncommitted work or silently replace a different repository's clone.
+- Hold API credentials in memory. Disable kerness session persistence and
+  never include credentials in topics, reports or transcripts.
+- Incomplete evidence does not pass. Missing reviewers, malformed results,
+  rejected documentation audits and invalid citations stop publication.
+
+## Roadmap
+
+- **M1 — Documentation-first routing:** latest specification, safe local doc
+  preparation, separate original source and guide, PR/issue identification.
+- **M2 — Accountable review:** distinct specialists, debate, attributed votes,
+  strict completion and approval gates, readable reports.
+- **M3 — Public project quality:** reproducible installation, direct launcher,
+  offline integration tests, current architecture and independent review.
+
+M1–M3 are implemented. The automated checks exercise scripted model replies;
+live model quality and GitHub posting require a separately configured smoke
+run. See the module gaps for operational limitations.
 
 ## Development Loop
 
@@ -409,27 +212,6 @@ release. There is no separate approval or reporting phase.
   approach.
 - Never widen scope to satisfy a finding. Record out-of-scope work under
   **Open Gaps / Roadmap**.
-
-### Project-Specific Deviations
-
-This repository has **no test runner and no `tests/` directory**. The suite is
-the **How to Test** block of each module doc under `ARCHITECTURE/` — self-contained
-`sh` and inline-`python` snippets whose passing evidence is a printed `ok …`
-line and exit 0. Prove's survey rule applies to them unchanged: enumerate every
-module doc's block and read the ones whose subject this change touches before
-adding a case, and add the case to the block owned by the module under change
-rather than opening a new one.
-
-Two consequences strengthen the Definition of Done here:
-
-- A change to a Python module is not proven until that module's owning doc's
-  block runs green *as written in the doc*. A snippet that has drifted from the
-  code is a failing test, not a stale comment.
-- The end-to-end run is the only check that exercises the panel, needs `gh
-  auth`, an LLM endpoint and network, and costs real tokens. It is listed in
-  [review-cli.md](ARCHITECTURE/review-cli.md) as a manual step and is **not**
-  part of the automated gate; a change to the topic builders, the gameplans or
-  the personas is not done until it has been run once with `--dry-run`.
 
 ## Coding Discipline
 
@@ -551,27 +333,22 @@ create a reporting phase.
 
 ### Project-Specific Deviations
 
-The seven checks above are the same seven the panel runs; this section is the
-tool reviewing itself, and the two must not drift. Three additions:
-
-- **[Hard guardrails](#hard-guardrails) are `blocker`s by construction.** A
-  change that adds a GitHub call outside `github_io.gh`, exposes a `cmd`-like
-  tool to the panel, reaches `gh pr merge` / `gh issue close` / `git push`, or
-  persists the API key does not merge, whatever else it does. Check 7 owns
-  guardrails 1, 4, 5 and 6; check 5 owns guardrails 2 and 3.
-- **Check 6 has a standing answer here.** `requirements.txt` names exactly one
-  dependency, kerness, built from source. A second top-level dependency is a
-  `major` needing an explicit argument that the standard library will not do.
-- **Check 1's own subject is versioned.** `prompts/coding_styles.md` is the
-  rubric this project hands the panel; a change to the four core languages'
-  conventions changes every future review, so it updates
-  `repo_facts.INDENT_LANGS` and this file's core-languages note in the same
-  change.
+- The shared release checks govern development of this tool. Reviews of target
+  submissions inspect source and documentation only; they never claim a target
+  test run or full eatmycode release compliance. This does not waive this
+  project's own build, test or review criteria.
+- The generic review rubric requires a demonstrated need before approval.
+  Preserve `Need: justified`, `Need: unclear` or `Need: unnecessary` in Fit's
+  checklist note. Missing context is a concern, not a fabricated code defect.
+- A second top-level dependency needs evidence that the standard library
+  cannot reasonably implement the required behavior.
 
 ## Index
 
-- [review-cli.md](ARCHITECTURE/review-cli.md) — CLI orchestrator: topic assembly, measured facts, result mapping, verdict policy (`--allow-approve`), posting.
-- [harness.md](ARCHITECTURE/harness.md) — the panel: gameplans, phases, personas, tools, and the default-deny access policy that makes guardrail 3 structural.
-- [github-io.md](ARCHITECTURE/github-io.md) — the `gh` chokepoint and the deny-list that enforces guardrails 1, 4, 5, 6.
-- [git-io.md](ARCHITECTURE/git-io.md) — clone lifecycle, fresh review branches, and base-branch resolution (why a profile may pin a branch).
-- [prompts.md](ARCHITECTURE/prompts.md) — the knowledge layers and the repo-profile lookup: architecture, review rubric, per-language style.
+- [Workflow and launcher](ARCHITECTURE/review-cli.md)
+- [Architecture preflight](ARCHITECTURE/architecture-preflight.md)
+- [Panels, tools and attributed ballots](ARCHITECTURE/harness.md)
+- [Report and approval policy](ARCHITECTURE/reporting.md)
+- [GitHub access](ARCHITECTURE/github-io.md)
+- [Git checkouts](ARCHITECTURE/git-io.md)
+- [Repository profiles and prompts](ARCHITECTURE/prompts.md)

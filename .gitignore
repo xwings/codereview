@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+venv/
+.ruff_cache/
+.pytest_cache/
 
 # Script-managed working clone(s) of the repositories under review
 repo/

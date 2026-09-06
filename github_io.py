@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
-
 
 # Forbidden subcommand prefixes for `gh` and `git`. Checked before every
 # subprocess call so guardrails 1, 4, 5, 6 cannot be silently broken.
@@ -97,21 +97,38 @@ def fetch_pr(repo: str, n: int) -> dict[str, Any]:
     return json.loads(res.stdout)
 
 
-def fetch_pr_diff(repo: str, n: int) -> str:
-    res = gh("pr", "diff", str(n), "--repo", repo)
-    return res.stdout
-
-
 def fetch_issue(repo: str, n: int) -> dict[str, Any]:
     fields = "number,title,body,author,comments,labels,state,url"
     res = gh("issue", "view", str(n), "--repo", repo, "--json", fields)
     return json.loads(res.stdout)
 
 
+def detect_kind(repo: str, n: int) -> str:
+    """Confirm the resource kind; a failed PR lookup alone is not an issue."""
+    pr = gh("pr", "view", str(n), "--repo", repo, "--json", "number,url", check=False)
+    if pr.returncode == 0:
+        return "pr"
+    issue = gh("issue", "view", str(n), "--repo", repo, "--json", "number,url", check=False)
+    if issue.returncode == 0:
+        # Some gh versions accept PR numbers through the issue endpoint.
+        url = json.loads(issue.stdout).get("url", "")
+        return "pr" if "/pull/" in url else "issue"
+    raise SystemExit(
+        f"error: cannot find PR or issue #{n} in {repo}. Nothing posted.\n"
+        f"  PR lookup: {pr.stderr.strip()}\n  Issue lookup: {issue.stderr.strip()}"
+    )
+
+
 def post_pr_review(repo: str, n: int, *, approve: bool, body: str) -> None:
     flag = "--approve" if approve else "--comment"
-    gh("pr", "review", str(n), "--repo", repo, flag, "--body", body)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", encoding="utf-8") as output:
+        output.write(body)
+        output.flush()
+        gh("pr", "review", str(n), "--repo", repo, flag, "--body-file", output.name)
 
 
 def post_issue_comment(repo: str, n: int, body: str) -> None:
-    gh("issue", "comment", str(n), "--repo", repo, "--body", body)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", encoding="utf-8") as output:
+        output.write(body)
+        output.flush()
+        gh("issue", "comment", str(n), "--repo", repo, "--body-file", output.name)

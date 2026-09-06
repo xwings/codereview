@@ -15,6 +15,44 @@ point at a file for is not a rule — you may not demand it of a contributor.
 
 ## What to flag
 
+### Need and fit with the project
+
+Check whether the change is needed before judging its implementation. Establish
+the concrete user or maintainer problem and the evidence for it: what remains
+broken, missing, or unnecessarily difficult without this PR? Then check whether
+existing functionality, configuration, or documentation already covers the
+actual use case, whether the solution belongs in this project and layer or in
+an extension/downstream application, and whether the benefit warrants the API,
+complexity, dependencies, and maintenance it adds. Consider a smaller solution
+that achieves the same benefit.
+
+Use the project's stated purpose, documented direction, and source as evidence;
+do not impose personal product preferences or assume a new capability is out
+of scope simply because it is new. Concrete maintenance, documentation,
+accessibility, and bug-fix improvements are valid benefits. Neither a ticket
+nor a benchmark is required for every change. An existing alternative must
+cover the actual use case and exist independently of this PR before it
+establishes that an addition is redundant; the checkout includes the PR's code.
+
+Record one conclusion in the Fit checklist note, with its evidence or reason:
+
+- **Need: justified** — a concrete benefit warrants the change; still assess
+  placement and proportionality before passing the whole Fit check.
+- **Need: unclear** — the available context does not establish the need; name
+  what is missing and use checklist status `concern` unless a separate
+  confirmed Fit blocker applies. Uncertainty alone is neither a code finding
+  nor a blocker; do not invent a file, line, or fix for it.
+- **Need: unnecessary** — positive evidence shows the change adds no needed
+  benefit, such as an existing API already covering the same use case. Use
+  checklist status `concern` unless a separate confirmed blocker applies.
+  A code finding requires real `file:line` evidence and an actionable remedy,
+  such as removal or reuse, in the existing finding fields. Assign its severity
+  by the demonstrated impact using this rubric; the conclusion alone does not
+  imply a blocker.
+
+Missing justification is not evidence that a PR is unnecessary. Both unclear
+and unnecessary need require `verdict = "comment"`, even with no code findings.
+
 ### Layering & boundaries
 
 Derive the project's boundaries from the tree, then judge against them:
@@ -82,9 +120,12 @@ Derive the project's boundaries from the tree, then judge against them:
 ## Approve threshold
 
 Use `verdict = "approve"` ONLY if:
+
 - Zero `blocker` findings, AND
 - Zero `major` findings, AND
 - The pull request is not a draft, AND
-- The pull request description (or commits) make the intent clear.
+- The pull request description (or commits) make the intent clear, AND
+- Fit established `Need: justified` in verify and recorded the evidence in its
+  checklist note.
 
 Otherwise, use `verdict = "comment"`.

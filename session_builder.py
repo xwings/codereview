@@ -12,6 +12,7 @@ from pathlib import Path
 import kerness
 
 import agent_tools
+from panel_runtime import PANELS, PanelChannel
 
 ROOT = Path(__file__).resolve().parent
 GAMEPLANS = ROOT / "gameplans"
@@ -19,19 +20,9 @@ PERSONAS = ROOT / "personas"
 
 # Panel seat -> persona file. The order is the order of the seven checks, and
 # the gameplan requires exactly this many participants.
-PR_PANEL = (
-    ("Style", "style_officer.md"),
-    ("Naming", "naming_conventions.md"),
-    ("Duplication", "duplication_hunter.md"),
-    ("Quality", "code_quality.md"),
-    ("Fit", "project_fit.md"),
-    ("Dependencies", "dependency_auditor.md"),
-    ("Security", "security_reviewer.md"),
-)
-ISSUE_PANEL = (
-    ("Reproducer", "issue_reproducer.md"),
-    ("Scope", "issue_scoper.md"),
-)
+PR_PANEL = PANELS["pr"]
+ISSUE_PANEL = PANELS["issue"]
+DOCS_PANEL = PANELS["docs"]
 CHAIR = ("Chair", "maintainer_chair.md")
 
 
@@ -44,14 +35,8 @@ def build_provider(api_key: str, api_base: str, timeout_s: int) -> kerness.Custo
     )
 
 
-def _channel(transcript: Path | None) -> kerness.Channel:
-    console = kerness.ConsoleChannel()
-    if transcript is None:
-        return console
-    return kerness.MultiChannel(console, kerness.FileChannel(str(transcript)))
-
-
 def _build(
+    kind: str,
     gameplan: str,
     panel: tuple[tuple[str, str], ...],
     tools: list[agent_tools.Tool],
@@ -62,29 +47,37 @@ def _build(
     model: str,
     transcript: Path | None,
     max_turns: int | None,
+    verbose: bool = False,
+    documentation: Path | None = None,
 ) -> kerness.Session:
-    # The checkout is the world. A workspace grants everything under it and
-    # nothing outside it, so this is both the read boundary — kerness resolves
-    # paths and rejects `..` traversal and symlink escape itself — and the
-    # directory a command would start in. `["*"]` is the anchored glob that
-    # matches every command line; commands stay unreachable regardless, because
-    # no gameplan declares the `cmd` tool.
+    # Source is the workspace; only named guide files and a requested transcript
+    # extend its boundary. Kerness rejects traversal and symlink escapes.
+    # Commands remain unreachable because no gameplan declares a command tool.
+    allowed_files = [str(transcript.resolve())] if transcript else []
+    if documentation is not None:
+        docs_root = documentation.resolve()
+        documents = [docs_root / "ARCHITECTURE.md", *sorted((docs_root / "ARCHITECTURE").glob("*.md"))]
+        for path in documents:
+            resolved = path.resolve()
+            if not resolved.is_relative_to(docs_root) or not resolved.is_file():
+                raise ValueError(f"Documentation reference must be a file inside {docs_root}: {path}")
+            allowed_files.append(str(resolved))
     policy = kerness.AccessPolicy(
         workspace=str(clone.resolve()),
         allowed_commands=["*"],
-        # The one path the run may touch outside the checkout, and only when
-        # the maintainer named it. Session construction checks a channel's
-        # destination against the same boundary as a model's read.
-        allowed_files=[str(transcript.resolve())] if transcript else [],
+        # Outside the source checkout, grant only prepared architecture files
+        # and an explicitly requested transcript, never the whole docs tree.
+        allowed_files=allowed_files,
     )
 
     session = kerness.Session(
         gameplan=str(GAMEPLANS / gameplan),
         topic=topic,
         provider=provider,
-        channel=_channel(transcript),
+        channel=PanelChannel(kind, transcript, verbose),
         access_policy=policy,
         max_turns=max_turns,
+        turn_delay_sec=0,
         session_file=None,  # nothing about this run is written to disk
         # Inside the workspace, because the default `memory.md` resolves against
         # the launch directory and would fall outside it. Never created: the
@@ -107,9 +100,14 @@ def _build(
 
 def build_pr_session(**kwargs) -> kerness.Session:
     clone = kwargs["clone"]
-    return _build("pr_review.md", PR_PANEL, agent_tools.pr_tools(clone), **kwargs)
+    return _build("pr", "pr_review.md", PR_PANEL, agent_tools.pr_tools(clone), **kwargs)
 
 
 def build_issue_session(**kwargs) -> kerness.Session:
     clone = kwargs["clone"]
-    return _build("issue_triage.md", ISSUE_PANEL, agent_tools.issue_tools(clone), **kwargs)
+    return _build("issue", "issue_triage.md", ISSUE_PANEL, agent_tools.issue_tools(clone), **kwargs)
+
+
+def build_docs_session(**kwargs) -> kerness.Session:
+    clone = kwargs["clone"]
+    return _build("docs", "architecture_docs.md", DOCS_PANEL, agent_tools.issue_tools(clone), **kwargs)

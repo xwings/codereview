@@ -1,7 +1,4 @@
-# The multi-agent harness. Everything else is stdlib, plus the `gh` and `git`
-# CLIs. Not on PyPI, and the released wheel is not enough: the panel needs the
-# orchestrator-rotation fixes that live on kerness's `dev` branch. Build from
-# the working clone this repo keeps beside it (gitignored, its own repository):
-#   git clone -b dev git@github.com:xwings/kerness.git vendor/kerness
-#   cd vendor/kerness/bindings/python && ../../../../.venv/bin/maturin develop --release
-kerness
+# See README.md to build kerness; it is not on PyPI. Use public revision
+# 7c97dcb4e50a8fd05d05185b0052ba1356be016a with the tracked PyO3 patch.
+# This constraint records the installed package version; it is not a bootstrap.
+kerness==0.1.2.dev0
