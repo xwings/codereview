@@ -78,7 +78,7 @@ def _build(
         gameplan=str(GAMEPLANS / gameplan),
         topic=topic,
         provider=provider,
-        channel=PanelChannel(kind, transcript, verbose),
+        channel=PanelChannel(kind, transcript, verbose, model),
         system_prompt=instructions,
         access_policy=policy,
         max_turns=max_turns,

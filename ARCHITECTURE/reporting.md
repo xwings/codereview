@@ -35,6 +35,10 @@ inside the supplied checkout, and lines must be real integer positions
 merging, all seven checks pass, need is justified, no unresolved question or
 major/blocker remains, and the PR is open/non-draft. Style and naming are
 separate checklist keys. `--allow-approve` controls delivery independently.
+PR reports repeat the opening decision in a closing `Final verdict` section with
+an explicit merge instruction and the approval reason or unmet gate requirements.
+An explicit rejection takes precedence over requested fixes. A hold means do not
+merge yet. Rendering does not change approval eligibility or GitHub delivery.
 
 Stage schemas have exact fields. Each candidate finding receives one cited
 Verifier disposition: confirmed findings survive, withdrawn ones are omitted,
@@ -67,8 +71,9 @@ erase earlier unanswered questions. Source inspection never claims execution.
 - `reporting.py:261` — `render_finding` renders one location, problem
   and fix; blocking source excerpts and optional code sketches are expandable.
 - `reporting.py:280` — `render_pr` leads with the verdict, then two
-  assessments, confirmed findings, unresolved questions and seven checks.
-- `reporting.py:316` — `render_issue` validates/renders the answer,
+  assessments, confirmed findings, unresolved questions and seven checks;
+  it closes with the same verdict, a merge instruction and reasons.
+- `reporting.py:323` — `render_issue` validates/renders the answer,
   source evidence, next steps, questions and verification status.
 
 ## Interactions
@@ -91,6 +96,9 @@ python3 -m py_compile reporting.py
 Expected: all cases pass, including independent agreement, all seven checks,
 need/state gates, candidate confirmations/withdrawals/disputes, preserved questions,
 malformed citations, issue verification/evidence, table escaping and concise output.
+The report-ordering case checks matching opening/closing verdicts, explicit merge
+instructions, reasons and rejection precedence. The default CLI integration case
+proves identical reports with or without `--verbose`, without a transcript.
 No target commands or external writes occur.
 
 ## Review and Refactor Guide

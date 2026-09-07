@@ -40,7 +40,8 @@ configuration is tracked; locally installed tool versions do not define support.
 ## System Design
 
 `review.py` coordinates the workflow. `progress.py` supplies shared stderr
-activity messages and elapsed-time heartbeats to the CLI and panel runtime.
+messages with local timestamp, model, agent and phase, plus elapsed-time
+heartbeats for the CLI and panel runtime.
 The CLI calls architecture preparation, checkout/GitHub boundaries, panel
 construction/runtime, and report validation;
 those modules own their contracts and do not import the CLI. `repo_facts.py`
@@ -48,7 +49,7 @@ and `agent_tools.py` collect inspection evidence through the I/O boundaries.
 Gameplans and personas define review contracts and expertise. Host code selects
 Lead, any requested Security/Dependencies consultants, then Verifier. All seven
 checks remain separate. It validates authenticated turns, result shape and
-independent assessments (`panel_runtime.py:151`).
+independent assessments (`panel_runtime.py:166`).
 The [Index](#index) routes subsystem changes and their interaction partners.
 
 Cross-cutting invariants:
@@ -70,14 +71,14 @@ Cross-cutting invariants:
 - Keep credentials in memory; disable kerness session persistence and exclude
   credentials from topics, reports and transcripts (`session_builder.py:27`).
 - Missing reviewers, malformed results, rejected documentation audits and invalid
-  citations stop publication (`panel_runtime.py:151`, `reporting.py:41`).
+  citations stop publication (`panel_runtime.py:166`, `reporting.py:41`).
 
 ## Runtime and Data Flow
 
 1. `code.sh` selects `.venv/bin/python` or legacy `venv/bin/python`, forwards
    arguments and preserves the caller's directory and process exit status.
    `review.py:76` accepts `--id NUMBER` or legacy `auto|pr|issue NUMBER`.
-2. `review.py:419` validates options and credentials, identifies the PR/issue
+2. `review.py:423` validates options and credentials, identifies the PR/issue
    kind and rejects an explicit mismatch before source preparation. It fetches
    PR metadata when applicable, then checks the managed clone.
 3. Git prepares an isolated snapshot of the required `--branch`. Issues use
@@ -91,21 +92,32 @@ Cross-cutting invariants:
    downgrading (`git_io.py:109`, `review.py:310`).
 4. Lead reviews architecture and complete relevant source, optional consultants
    investigate focused questions, and Verifier accounts for every finding. Issues
-   use one investigation and conditional verification. The host validates
+   use one investigation and conditional verification. A missing or malformed
+   result record permits one format-correction turn by the same reviewer;
+   both attempts remain in authenticated history. Complete JSON with ordinary
+   indentation, line breaks or fences is accepted
+   without correction in both verbosity modes (see [panels](ARCHITECTURE/harness.md)).
+   Invalid schemas or citations still stop the run. The host validates
    participation, result fields, citations and assessments, then renders one report
-   naming the selected branch, pinned base and reviewed revision. PR citations refer to the local merge
+   naming the selected branch, pinned base and reviewed revision. PR reports close
+   with an explicit merge instruction and the approval reason or unmet requirements.
+   PR citations refer to the local merge
    result and may differ from GitHub PR-head lines.
-5. `review.py:340` prints Markdown to stdout and posts through `gh` unless
+5. `review.py:342` prints Markdown to stdout and posts through `gh` unless
    `--dry-run`. PR metadata is checked again before publication. Progress and
    suggested labels go to stderr; errors and interruption return nonzero.
+   The complete workflow runs without `--verbose` or a transcript; `--verbose`
+   adds the panel discussion to stderr.
 
 CLI flags and `REVIEW_API_KEY`, `REVIEW_API_BASE`, `REVIEW_MODEL` configure the
 provider. `--timeout` limits each model request; calls are synchronous, with no
 whole-run deadline. Each active progress scope has a temporary thread that
 prints a heartbeat every 15 seconds and is stopped and joined on scope exit,
-including errors and interruption (`progress.py:15`). Panel status identifies
-model waits, evidence inspection and completed review steps; documentation
-preparation retains phase and specialist-turn progress.
+including errors and interruption (`progress.py:22`). Panel status identifies
+model waits, evidence inspection and completed review turns using
+`[YYYY-MM-DD HH:MM:SS] [model] [agent] [phase]`. Documentation phases follow
+the required specialist rotation; provider purpose identifies summary calls.
+Verbose mode adds agent and system exchanges; default output excludes them.
 Optional transcripts are explicit files; session state is not persisted.
 Managed clones, isolated source repositories, guide worktrees and the upstream
 rule cache are retained across process exit. There is no service, database or
@@ -133,7 +145,7 @@ shutdown worker. See [workflow](ARCHITECTURE/review-cli.md) and
 Observed Python conventions are four-space indentation, `snake_case` functions,
 `UPPER_CASE` constants, standard-library imports before local imports, postponed
 annotations and typed boundaries. Reuse `Path`, dataclasses for fixed internal
-records, and dictionaries for model/CLI payloads (`panel_runtime.py:93`,
+records, and dictionaries for model/CLI payloads (`panel_runtime.py:81`,
 `session_builder.py:36`, `reporting.py:226`). Annotations are not uniform or
 statically enforced; preserve the surrounding style rather than imposing a new
 checker. No formatter/linter/type-check command is configured.

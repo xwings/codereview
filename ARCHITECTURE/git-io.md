@@ -89,7 +89,6 @@ merge endpoint or update the selected remote branch.
   returning `Source`.
 - `git_io.py:167` — `review_workspace`: retained unique detached guide worktree
   under `<workdir>/.reviews/`, attached to the source repository.
-- `git_io.py:177` — `require_head`: fail when a checkout has an unexpected revision.
 
 ## Interactions
 

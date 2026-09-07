@@ -34,7 +34,7 @@ historical upstream verification; current changes require the checks below. Live
 Python binds a declarative Markdown/YAML harness to kerness; personas are
 Markdown instructions. Follow [root Python conventions](../ARCHITECTURE.md#coding-style-and-code-design).
 `session_builder.py:36` is the canonical session/access-policy constructor;
-`panel_runtime.py:151` owns completion validation. Roster identifiers are
+`panel_runtime.py:166` owns completion validation. Roster identifiers are
 protocol values shared with gameplans, not display names. The only extension
 dependency is the pinned patched kerness build described in `patches/README.md`.
 No local formatter/type-checker configuration exists.
@@ -46,6 +46,9 @@ observed participation and stage results; reporting owns nested validation and
 assembly. Gameplans own protocol instructions, explicitly delivered to agents. Model
 and repository text cannot grant tools or forge attributed history. Host code
 uses the strict owned run API and never treats coerced defaults as evidence.
+Routing and replay own bounded format correction (`panel_runtime.py:234`,
+`panel_runtime.py:132`). Live steps validate before routing; replay validates
+the initial route and delegates remaining stage validation to report assembly.
 Session persistence is disabled; transcripts are opt-in and failures propagate.
 The access policy grants named guide files outside the reviewed source, not the
 whole guide worktree. No gameplan declares command or write tools. All source
@@ -62,14 +65,14 @@ explicit PyPI/OSV endpoints (`agent_tools.py:60`, `agent_tools.py:180`).
 - `session_builder.py:106` — `build_pr_session`; issue and documentation
   builders select their corresponding gameplans and rosters below it.
 - `panel_runtime.py:15` — `PANELS` holds stable routing IDs/personas;
-  `PHASES` is documentation-only and `TITLES` owns human display names.
-- `panel_runtime.py:47` — `PanelChannel` prints completed PR/issue
-  steps and documentation phase/turn counts on stderr.
-- `panel_runtime.py:93` — `PanelResult` carries strict fields,
+  `PHASES` is documentation-only; progress uses the registered agent names.
+- `panel_runtime.py:44` — `PanelChannel` delivers optional verbose agent/system
+  exchanges and transcripts; compact status comes from runtime events.
+- `panel_runtime.py:81` — `PanelResult` carries strict fields,
   authenticated history, engine counters, usage and independent assessments.
-- `panel_runtime.py:151` — `validate_panel` replays the required
+- `panel_runtime.py:166` — `validate_panel` replays the required
   sequence and proves final fields/assessments match attributed stage records.
-- `panel_runtime.py:256` — `run_session` requires a source checkout
+- `panel_runtime.py:304` — `run_session` requires a source checkout
   for PR/issues, drives host-selected turns, and rejects incomplete outcomes.
 - `agent_tools.py:60` — `make_repo_grep` searches tracked files through the
   audited Git wrapper; package and upstream metadata tools complement it.
@@ -81,15 +84,33 @@ body alone is not automatically included by kerness. Persona instructions use
 sections that kerness actually loads. Repository/profile prose cannot grant tools
 or replace the protocol.
 
-| Review | Required sequence | Agent turns |
+| Review | Required sequence | Agent turns including format corrections |
 | ---- | ---- | ---- |
-| PR | Lead → requested Security → requested Dependencies → Verifier | 2–4 |
-| Issue | Investigator → Verifier when required | 1–2 |
+| PR | Lead → requested Security → requested Dependencies → Verifier | 2–4 stages, at most 8 turns |
+| Issue | Investigator → Verifier when required | 1–2 stages, at most 4 turns |
 | Documentation | Chair routes DocsPlanner, DocsWriter, DocsVerifier in `plan`, `draft`, `verify` | 9 specialist turns plus chair calls |
 
-Each PR/issue turn ends with one `RESULT {JSON}` line. The host validates the
-stage before proceeding and captures engine `turn_committed` events, then checks
-those events against final history. Agent names in prose cannot impersonate a
+Gameplans request one terminal `RESULT {JSON}` line. The shared parser
+(`panel_runtime.py:93`) also accepts indented or multiline JSON, a complete
+terminal triple-backtick JSON fence around the record or its payload, and a
+response consisting solely of a JSON object with an optional fence. It parses
+the entire payload, rejecting duplicate records, incomplete JSON and trailing
+prose; it never extracts bare objects from arbitrary prose. These formats use
+the same validation in both verbosity modes and require no correction.
+A missing record or malformed JSON permits exactly one additional turn by the same actor to
+correct the format, preserving the findings, evidence, questions and conclusion.
+Schema and citation errors remain terminal. Both attempts stay in the engine
+history and transcript; replay accepts a correction only immediately after that
+actor's invalid attempt and rejects duplicate valid results or a second invalid
+attempt. Default gameplan ceilings
+are 8 PR turns or 4 issue turns and two engine rounds, allowing a correction for
+each required stage without reopening the review. Explicit `--max-turns` still
+limits the whole panel. Correction prompts include the parser's failure reason.
+Exhausted corrections explain that no complete model result was supplied;
+verbosity only controls logging. The response is not printed by default.
+The host validates the stage before proceeding and captures engine
+`turn_committed` events, then checks those events against final history.
+Agent names in prose cannot impersonate a
 reviewer. `select_agent` controls order; `finish` validates final fields without
 another model call. The host derives results from authenticated records, since
 engine finalization alone can succeed without required participation. Exhausted
@@ -123,17 +144,27 @@ content or structure. PR/issue topics disclose the skipped checks and still
 require full relevant source reads. Reused guides live in the source snapshot
 and need no additional file grants; generated guides live in separate worktrees.
 
-Default progress uses engine events to identify each model wait and evidence
-inspection before it starts; only known display identities and host-authored
-operation descriptions are printed. Event payloads, tool arguments, source and
-model text are excluded. The [workflow](review-cli.md) owner's `progress.activity`
-adds a flushed heartbeat every 15 seconds, including during blocked provider
-calls, and stops its thread on every panel exit. Completion is printed only after
-strict outcome and participation validation. PR/issue completion shows the step
-and reviewer; documentation shows phase and specialist-turn counts. Counts are
-observations and never substitute for validation.
+Default progress uses engine events to identify each model wait, evidence
+inspection and committed specialist turn. The common format is
+`[YYYY-MM-DD HH:MM:SS] [model] [agent] [phase]`; model names come from the
+registered agents and operation descriptions are host-authored. Raw event
+payloads, tool arguments, source and model text are excluded. PR/issue stages
+use `review` or `verify`. Kerness events do not expose phase names, so docs
+`plan`, `draft` and `verify` follow the required specialist rotation, excluding
+Chair turns; final-summary provider purpose selects `summary`. These observations
+never substitute for participation validation. The [workflow](review-cli.md)
+owner's `progress.activity` retains model/agent/phase in its flushed heartbeat
+every 15 seconds and stops its thread on every panel exit. A committed turn
+is distinct from successful panel completion, which follows strict validation.
 
-Output does not repeat chair chatter and raw JSON by default. The optional raw
+Output does not repeat chair chatter, system messages or raw JSON by default.
+`--verbose` emits full agent/system exchanges with the same prefix. All panels report engine failures through one formatter: failure reason and
+actual error category, with HTTP status or a request-timeout indication when
+available. The engine end state is used only when no error exists; a network
+failure must not be mislabeled by the engine's fallback `max_turns` state.
+Provider URLs, raw causes and response bodies stay out of the diagnostic.
+A review that finishes before a required agent uses the same formatter.
+The optional raw
 transcript is delivered directly so a write failure stops the run; kerness's
 fan-out channel intentionally suppresses member failures and therefore is not
 suitable for this required audit artifact. Transcript destinations are declared
@@ -184,8 +215,11 @@ cargo clippy --manifest-path vendor/kerness/Cargo.toml --workspace --all-targets
 The workflow suite must exit zero and exercise real scripted host-driven
 reviews, consultant selection, conditional issue verification, actual prompt
 delivery, per-agent attribution, finding accounting and dissent. It also covers
-strict errors, turn limits, unchanged documentation audits, progress, blocked-model
-heartbeats, tool confinement and transcript success/failure. Kerness selfcheck must print
+strict errors, formatted JSON in both verbosity modes without a transcript,
+corrected results with retained history, rejected correction/actor
+tampering, correction exhaustion, turn limits, unchanged documentation audits,
+progress, blocked-model heartbeats, tool confinement and transcript success/failure.
+Kerness selfcheck must print
 `OK: all core checks passed`. For dependency patch changes, the binding suite
 must pass and Rust test/clippy commands must exit zero; recorded historical
 counts in `patches/README.md:25` are not a substitute for a new run. The vendor
@@ -221,8 +255,9 @@ checks in How to Test and renewed advisory/license evidence.
 - Participation and assessment identity are enforced; semantic understanding
   and source interpretation remain model-dependent. Independent verification
   and maintainer review remain necessary.
-- PR review is bounded to 2–4 turns, issues to 1–2; tool followups and context
-  compaction can add provider requests within a turn. Documentation preparation
+- PR review is bounded to 2–4 stages, issues to 1–2, with at most one additional
+  format-correction turn per stage. Tool followups and context compaction can add
+  provider requests within a turn. Documentation preparation
   still has chair routing and closing calls when the architecture gate requires it.
 - Package advisory coverage is PyPI-specific; other ecosystems need additional
   evidence and must not be reported as verified when evidence is absent.

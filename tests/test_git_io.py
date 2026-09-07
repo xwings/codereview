@@ -73,7 +73,7 @@ class GitSourceTests(unittest.TestCase):
         again = git_io.prepare_source(self.clone, self.root, "selected", pr_number=1, pr_head=self.head)
         self.assertEqual(again.revision, source.revision)
         guide = git_io.review_workspace(source.path, self.root, "guide")
-        git_io.require_head(guide, source.revision)
+        self.assertEqual(git_io.git("rev-parse", "HEAD", cwd=guide).stdout.strip(), source.revision)
         (guide / "ARCHITECTURE.md").write_text("Generated guide.\n")
         self.assertFalse((source.path / "ARCHITECTURE.md").exists())
         self.assertEqual(git_io.git("rev-parse", "HEAD", cwd=self.clone).stdout, self.managed_head)

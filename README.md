@@ -41,6 +41,8 @@ export REVIEW_API_BASE='https://api.openai.com/v1'  # optional default
 `code.sh` forwards all arguments directly to `review.py` through the project
 virtual environment. Argument parsing, stdout, stderr and exit status belong
 to `review.py`; the launcher does not capture or reformat its output.
+`--verbose` is optional: the command above runs the complete review and prints
+the final report with progress on stderr. Add `--verbose` to see the panel discussion.
 
 Options can also be passed directly:
 
@@ -81,11 +83,24 @@ remain separate checks within the same review. Lead can request Security or
 Dependencies once each for a concrete question before verification. The host
 selects the reviewers directly; there are no chair-routing, debate, voting or
 closing-draft rounds. Tool use can require multiple model requests within a turn.
+Complete JSON results are accepted with indentation, line breaks or JSON code
+fences, with or without `--verbose`. If a reviewer omits or malforms the required
+result record, the host asks that
+same reviewer once to correct its format. Both attempts remain in the transcript;
+invalid fields or citations still stop the review. Default budgets allow these
+corrections (up to eight PR turns or four issue turns); `--max-turns` remains a
+hard ceiling. If correction fails, the model has not supplied a complete result
+and nothing is posted. Verbose output and transcripts help inspect responses;
+neither is required to complete a review.
 
 Every proposed finding must be confirmed, withdrawn with cited evidence, or
 reported as unresolved. Approval requires both reviewers to recommend merging,
 all seven checks to pass, justified need, no unresolved questions, and no major
 or blocker findings. Differing recommendations stay visible in the report.
+Each PR report opens and closes with the same verdict: **Ready to merge**,
+**Changes requested**, **Hold**, or **Do not merge**. The closing verdict states
+whether to merge and gives the approval reason or outstanding requirements.
+Rejection takes precedence over requested fixes; a hold means do not merge yet.
 
 Straightforward support or missing-information issues can finish after one
 investigation. Other classifications, uncertainty, or an explicit request by
@@ -123,9 +138,18 @@ GitHub. Generated guide edits are excluded from citations.
 The API key and model also accept `--api-key` and `--llm-model`. Credentials
 are not written into session files. See `./code.sh --help` for all options.
 
-Progress shows each preparation step, the reviewer waiting for a model
-response or inspecting evidence, and completed review turns. Documentation
-preparation also reports its phases.
+Progress uses `[YYYY-MM-DD HH:MM:SS] [model] [agent] [phase]` on stderr,
+with local date and time. It identifies preparation, model waits, source reads,
+completed turns and final validation. For example:
+
+```text
+[2026-09-07 15:30:00] [deepseek-v4-flash] [Lead] [review] waiting for model response...
+[2026-09-07 15:31:00] [deepseek-v4-flash] [Verifier] [verify] inspecting evidence...
+```
+
+Documentation preparation reports `plan`, `draft`, `verify` and `summary`.
+Host steps use `Host` as the agent. Normal progress excludes conversation text;
+`--verbose` adds the complete agent and system exchanges.
 While work is running, a heartbeat reports the current activity and elapsed
 time every 15 seconds, including during slow Git, GitHub and model requests.
 Successful steps show their total duration. This is enabled by default;
@@ -157,8 +181,9 @@ Original agent guidance and replaced or removed documents are preserved in
 coding documentation set.
 
 Model calls can be substantial: a PR includes at most one documentation panel
-plus two to four review turns. A current doc set within the size limit skips
-the documentation panel, worktree creation and guidance migration. This gate
+plus two to four review stages and any format-correction turns. A current doc
+set within the size limit skips the documentation panel, worktree creation and
+guidance migration. This gate
 checks versions and sizes; it does not certify content, links or complete
 subsystem coverage. The PR/issue panel still inspects full relevant source.
 `tests/test_architecture.py` uses synthetic versions for offline regression

@@ -9,8 +9,8 @@ agents:
     min: 4
     max: 4
 loop:
-  max_turns: 4
-  max_rounds: 1
+  max_turns: 8
+  max_rounds: 2
   verdict_rethink: false
 tools:
   - read_file
@@ -47,6 +47,10 @@ The host selects Lead once, optionally Security and Dependencies once each in
 that order, then Verifier once. No agent routes the conversation. There is no
 separate debate, vote, reconsideration or closing turn. One turn may make
 multiple read-only tool calls to gather the necessary evidence.
+If a result is missing or malformed, the host permits that same agent one
+format-correction turn before proceeding. Preserve the findings, evidence,
+questions and conclusion; this additional turn only repairs the result format.
+The default ceiling includes these corrections; an explicit turn limit still applies.
 
 Read ARCHITECTURE.md, the related ARCHITECTURE/ documents and full relevant
 source, then assess the change against the project's actual conventions and

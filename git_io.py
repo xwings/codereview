@@ -172,9 +172,3 @@ def review_workspace(clone: Path, workdir: Path, label: str) -> Path:
     workspace.rmdir()
     git("worktree", "add", "--detach", str(workspace), "HEAD", cwd=clone, isolated=True)
     return workspace
-
-
-def require_head(clone: Path, expected: str) -> None:
-    actual = git("rev-parse", "HEAD", cwd=clone).stdout.strip()
-    if actual != expected:
-        raise SystemExit("error: PR head changed during checkout. Nothing posted; re-run the review.")

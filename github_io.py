@@ -68,7 +68,7 @@ def ensure_gh_ready() -> None:
         raise SystemExit(
             "error: `gh` CLI not found on PATH. Install from https://cli.github.com/"
         )
-    res = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
+    res = gh("auth", "status", check=False)
     if res.returncode != 0:
         raise SystemExit(
             "error: `gh` is not authenticated. Run `gh auth login` first."

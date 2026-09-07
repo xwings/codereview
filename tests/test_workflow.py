@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -180,10 +181,17 @@ class WorkflowTests(unittest.TestCase):
                 if kind != "docs":
                     self.assertEqual(result.end_reason, "host_finished")
                     self.assertNotIn("Chair", actors)
-                    self.assertIn(f"step {len(actors)}", err.getvalue())
+                    for actor in actors:
+                        phase = "verify" if actor == "Verifier" else "review"
+                        self.assertIn(f"[offline-fixture] [{actor}] [{phase}] waiting for model response", err.getvalue())
                 else:
-                    self.assertIn("specialist turns 9/9", err.getvalue())
-                    self.assertIn("phase 3/3", err.getvalue())
+                    for phase in ("plan", "draft", "verify"):
+                        for actor in ("Chair", "DocsPlanner", "DocsWriter", "DocsVerifier"):
+                            self.assertIn(f"[offline-fixture] [{actor}] [{phase}] waiting for model response", err.getvalue())
+                    self.assertEqual(err.getvalue().count("[Chair] [summary] waiting for model response"), 2)
+                self.assertEqual(err.getvalue().count("review turn completed"), len(actors))
+                for line in err.getvalue().splitlines():
+                    self.assertRegex(line, r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[offline-fixture\] \[\w+\] \[\w+\] ")
                 self.assertEqual(out.getvalue(), "")
                 self.assertIn("app.py:1" if kind != "issue" else "app.py", transcript.read_text())
                 self.assertIn("inspecting evidence", err.getvalue())
@@ -220,17 +228,88 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.build("pr", [], documentation=guide)
 
+    def test_format_corrections_preserve_history_and_required_reviewers(self):
+        lead = self.fields | {"specialists": {name: f"Check {name}." for name in ("Security", "Dependencies")}}
+        consultant = {"findings": [], "questions": [], "summary": "Checked app.py:1."}
+        cases = [
+            ("pr", [lead, consultant, consultant, self.fields | {"finding_reviews": []}],
+             ["Lead", "Security", "Dependencies", "Verifier"], self.fields),
+            ("issue", [issue_fields("bug") | {"verify": True}, issue_fields("bug")],
+             ["Investigator", "Verifier"], issue_fields("bug") | {"verification": "independent"}),
+        ]
+        for kind, stages, actors, expected in cases:
+            with self.subTest(kind=kind):
+                invalid = ["Unformatted response sentinel", record(stages[1]) + "\nextra text",
+                           "RESULT {", "RESULT broken"]
+                corrected = ["RESULT\n" + json.dumps(stage, indent=2) for stage in stages]
+                replies = [reply for index, response in enumerate(corrected) for reply in (invalid[index], response)]
+                transcript = self.clone / f"corrected-{kind}.txt"
+                with redirect_stderr(io.StringIO()) as err, redirect_stdout(io.StringIO()) as out:
+                    result = panel_runtime.run_session(self.build(kind, replies, transcript), kind, clone=self.clone)
+                turns = [message for message in result.history if message["msg_type"] == "turn"]
+                self.assertEqual([message["sender"] for message in turns], [actor for actor in actors for _ in range(2)])
+                self.assertEqual([message["content"] for message in turns], replies)
+                self.assertEqual(result.turns_completed, len(replies))
+                self.assertEqual(len(self.provider.calls), len(replies))
+                self.assertEqual(result.fields, expected)
+                self.assertEqual(result.assessments, self.assessments if kind == "pr" else [])
+                for call in self.provider.calls[1::2]:
+                    self.assertIn("Correct only the result format", call[-1]["content"])
+                    self.assertIn("RESULT", call[-1]["content"])
+                self.assertIn("requesting one result-format correction", err.getvalue())
+                self.assertNotIn(invalid[0], err.getvalue())
+                self.assertIn(invalid[0], transcript.read_text())
+                self.assertEqual(out.getvalue(), "")
+
+                for mutation in ("missing correction", "different actor", "third attempt", "valid duplicate"):
+                    changed = copy.deepcopy(result)
+                    history = changed.history
+                    first = next(i for i, message in enumerate(history) if message["msg_type"] == "turn")
+                    correction = next(i for i in range(first + 1, len(history)) if history[i]["msg_type"] == "turn")
+                    if mutation == "missing correction":
+                        history.pop(correction)
+                        changed.turns_completed -= 1
+                    elif mutation == "different actor":
+                        history[correction]["sender"] = actors[1]
+                    elif mutation == "third attempt":
+                        history.insert(first, copy.deepcopy(history[first]))
+                        changed.turns_completed += 1
+                    else:
+                        history[first]["content"] = history[correction]["content"]
+                    with self.subTest(kind=kind, mutation=mutation), self.assertRaises(panel_runtime.PanelError):
+                        panel_runtime.validate_panel(changed, kind, clone=self.clone)
+
     def test_incomplete_or_malformed_results_never_become_a_review(self):
         lead = self.fields | {"specialists": {}}
         malformed = ["", "END_REVIEW", "RESULT {}", "RESULT []", "RESULT broken",
                      record(lead) + "\n" + record(lead), record(lead) + "\nextra text",
+                     json.dumps(lead) + "\n" + json.dumps(lead),
+                     "```json\n" + json.dumps(lead), "```json\n" + json.dumps(lead) + "\n~~~",
+                     "```json\n" + record(lead), "```json\n" + record(lead) + "\n~~~",
+                     "```json\n" + json.dumps(lead) + "\n```\nextra text",
+                     "An example: " + json.dumps(lead),
+                     "```json\n" + record(lead) + "\n" + record(lead) + "\n```",
+                     "```json\n" + json.dumps(lead | {"findings": [{"severity": "major", "file": "app.py",
+                         "line": 99, "message": "Wrong result", "fix": "Compute it."}]}) + "\n```",
                      record(lead | {"extra": True}), record(lead | {"findings": "none"}),
                      record(lead | {"specialists": {"Chair": "Check it"}}),
                      record(lead | {"specialists": {"Security": ""}})]
         for reply in malformed:
             with self.subTest(reply=reply), redirect_stderr(io.StringIO()), \
                     self.assertRaises((panel_runtime.PanelError, reporting.ReportError)):
-                panel_runtime.run_session(self.build("pr", [reply]), "pr", clone=self.clone)
+                panel_runtime.run_session(self.build("pr", [reply, reply]), "pr", clone=self.clone)
+        for kind in ("pr", "issue"):
+            for limit in (None, 1):
+                with self.subTest(correction=kind, limit=limit), redirect_stderr(io.StringIO()), \
+                        self.assertRaises(panel_runtime.PanelError) as error:
+                    panel_runtime.run_session(self.build(kind, ["Unformatted response sentinel"] * 2,
+                                                         max_turns=limit), kind, clone=self.clone)
+                self.assertEqual(len(self.provider.calls), 2 if limit is None else 1)
+                self.assertNotIn("Unformatted response sentinel", str(error.exception))
+                if limit is None:
+                    self.assertIn("Result-format correction failed", str(error.exception))
+                    self.assertIn("no complete review result", str(error.exception))
+                    self.assertNotIn("re-run with --verbose", str(error.exception))
         for kind, fields in (("pr", self.fields), ("issue", issue_fields("bug"))):
             with self.subTest(limit=kind), redirect_stderr(io.StringIO()), self.assertRaises(panel_runtime.PanelError):
                 panel_runtime.run_session(self.build(kind, scripted_replies(kind, fields), max_turns=1),
@@ -239,15 +318,40 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(verify=verify), redirect_stderr(io.StringIO()), self.assertRaises(reporting.ReportError):
                 panel_runtime.run_session(self.build("issue", [record(issue_fields() | {"verify": verify})]),
                                           "issue", clone=self.clone)
+            self.assertEqual(len(self.provider.calls), 1)
         for final in ({}, self.fields | {"finding_reviews": "none"}):
             with self.subTest(final=final), redirect_stderr(io.StringIO()), self.assertRaises(reporting.ReportError):
                 panel_runtime.run_session(self.build("pr", [record(lead), record(final)]), "pr", clone=self.clone)
+            self.assertEqual(len(self.provider.calls), 2)
         with redirect_stderr(io.StringIO()), self.assertRaises(panel_runtime.PanelError):
             panel_runtime.run_session(self.build("docs", ["END_REVIEW", "{}", "{}"]), "docs")
         fake = Mock()
+        fake._agents = []
         fake.start.return_value.step.return_value = {"status": "waiting", "reason": {"kind": "approval"}}
         with redirect_stderr(io.StringIO()), self.assertRaises(panel_runtime.PanelError):
             panel_runtime.run_session(fake, "pr", clone=self.clone)
+        failures = [
+            ({"ProviderHttp": {"status_code": 429, "url": "PRIVATE_URL", "body": "RAW PROVIDER RESPONSE"}},
+             "failed (ProviderHttp HTTP 429)"),
+            ({"ProviderNetwork": {"url": "PRIVATE_URL", "cause": "PRIVATE_CAUSE: timed out reading response"}},
+             "failed (ProviderNetwork: request timed out)"),
+            (None, "invalid_result (max_turns)"),
+        ]
+        for failure, expected in failures:
+            fake.start.return_value.step.return_value = {
+                "status": "finished", "outcome": {
+                    "reason": {"kind": "failed" if failure else "invalid_result"},
+                    "result": {"end_reason": "max_turns"}, "error": failure,
+                },
+            }
+            for kind in ("pr", "docs"):
+                with self.subTest(provider_failure=kind, expected=expected):
+                    with redirect_stderr(io.StringIO()), self.assertRaises(panel_runtime.PanelError) as error:
+                        panel_runtime.run_session(fake, kind, clone=self.clone)
+                    self.assertIn(expected, str(error.exception))
+                    self.assertEqual("max_turns" in str(error.exception), failure is None)
+                    for private in ("PRIVATE_URL", "PRIVATE_CAUSE", "RAW PROVIDER RESPONSE"):
+                        self.assertNotIn(private, str(error.exception))
 
     def test_final_report_requires_authenticated_independent_results(self):
         with redirect_stderr(io.StringIO()):
@@ -349,6 +453,12 @@ class WorkflowTests(unittest.TestCase):
         verdict, reasons = reporting.validate_pr(fields, self.clone, assessments, self.pr)
         report = reporting.render_pr(fields, self.clone, assessments, verdict, reasons, allow_approve=False)
         self.assertTrue(report.startswith("## PR verdict: Changes requested"))
+        self.assertIn("## Final verdict: Changes requested", report)
+        self.assertIn("**Do not merge until the major and blocker findings are resolved.**", report)
+        self.assertLess(report.index("</details>", report.index("Seven review checks")),
+                        report.index("## Final verdict:"))
+        for reason in reasons:
+            self.assertIn(reason, report.split("## Final verdict:")[1])
         self.assertIn(r"evidence \| needs follow-up", report)
         self.assertLess(report.index("### Review assessments"), report.index("## Findings"))
         self.assertEqual(report.count(self.fields["review_body"]), 1)
@@ -365,6 +475,22 @@ class WorkflowTests(unittest.TestCase):
             verdict, reasons = reporting.validate_pr(self.fields, self.clone, assessments, self.pr)
             report = reporting.render_pr(self.fields, self.clone, assessments, verdict, reasons, allow_approve=False)
             self.assertTrue(report.startswith(f"## PR verdict: {title}"))
+            self.assertIn(f"## Final verdict: {title}", report)
+            self.assertIn("Do not merge", report.split("## Final verdict:")[1])
+        fields["findings"] = [candidate]
+        verdict, reasons = reporting.validate_pr(fields, self.clone, assessments, self.pr)
+        report = reporting.render_pr(fields, self.clone, assessments, verdict, reasons, allow_approve=False)
+        self.assertTrue(report.startswith("## PR verdict: Do not merge"))
+        self.assertIn("## Final verdict: Do not merge", report)
+        for allow_approve in (False, True):
+            verdict, reasons = reporting.validate_pr(self.fields, self.clone, self.assessments, self.pr)
+            report = reporting.render_pr(self.fields, self.clone, self.assessments, verdict, reasons,
+                                         allow_approve=allow_approve)
+            self.assertTrue(report.startswith("## PR verdict: Ready to merge"))
+            self.assertIn("## Final verdict: Ready to merge", report)
+            self.assertIn("**This PR is ready to merge based on the source review.**", report)
+            self.assertIn(self.fields["reason"], report.split("## Final verdict:")[1])
+            self.assertEqual("Approval requires `--allow-approve`" in report, not allow_approve)
         self.assertEqual(reporting.fence("```\ncode\n```"), "````\n```\ncode\n```\n````")
 
     def test_issue_answer_requires_evidence_and_renders_concrete_next_steps(self):
@@ -390,18 +516,24 @@ class WorkflowTests(unittest.TestCase):
                                  ("issue", ["Investigator", "Verifier"]),
                                  ("docs", ["DocsPlanner", "DocsWriter", "DocsVerifier"] * 3)):
                 with self.subTest(verbose=verbose, kind=kind), redirect_stdout(io.StringIO()) as out, \
-                        redirect_stderr(io.StringIO()) as err:
+                        redirect_stderr(io.StringIO()) as err, patch.object(progress, "datetime") as clock:
+                    clock.now.return_value = datetime(2026, 9, 7, 12, 34, 56)
                     transcript = self.clone / f"channel-{kind}-{verbose}.txt"
-                    channel = panel_runtime.PanelChannel(kind, transcript, verbose)
+                    channel = panel_runtime.PanelChannel(kind, transcript, verbose, "fixture-model")
+                    channel.send_system("RAW SYSTEM DISCUSSION")
                     channel.send("Chair", "RAW CHAIR DISCUSSION")
                     for actor in actors:
                         channel.send(actor, "RAW PRIVATE DISCUSSION")
-                    self.assertEqual(channel.completed, len(actors))
                 self.assertEqual(out.getvalue(), "")
-                self.assertIn("phase 3/3" if kind == "docs" else f"step {len(actors)}", err.getvalue())
-                if kind != "docs":
-                    self.assertNotIn("phase", err.getvalue())
-                for raw in ("RAW PRIVATE DISCUSSION", "RAW CHAIR DISCUSSION"):
+                if verbose:
+                    for index, actor in enumerate(actors):
+                        phase = ("plan", "draft", "verify")[index // 3] if kind == "docs" else (
+                            "verify" if actor == "Verifier" else "review")
+                        self.assertIn(f"[2026-09-07 12:34:56] [fixture-model] [{actor}] [{phase}] "
+                                      "RAW PRIVATE DISCUSSION", err.getvalue())
+                else:
+                    self.assertEqual(err.getvalue(), "")
+                for raw in ("RAW PRIVATE DISCUSSION", "RAW CHAIR DISCUSSION", "RAW SYSTEM DISCUSSION"):
                     self.assertEqual(raw in err.getvalue(), verbose)
                     self.assertIn(raw, transcript.read_text())
         for kind, fields in (("pr", self.fields), ("issue", issue_fields())):
@@ -420,10 +552,12 @@ class WorkflowTests(unittest.TestCase):
                 caught = None
                 try:
                     with progress.activity("Checking source") as update:
-                        self.assertIn("Checking source...", err.getvalue())
-                        update("Waiting for repository fetch")
+                        self.assertRegex(err.getvalue(), r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] "
+                                         r"\[-\] \[Host\] \[prepare\] Checking source\.\.\.")
+                        update("Waiting for repository fetch", model="fixture-model", agent="Lead", phase="review")
                         self.assertTrue(err.flushed.wait(2), "No flushed heartbeat while work is blocked")
-                        self.assertIn("Still working: Waiting for repository fetch", err.getvalue())
+                        for text in ("Waiting for repository fetch...", "Still working: Waiting for repository fetch"):
+                            self.assertIn(f"[fixture-model] [Lead] [review] {text}", err.getvalue())
                         self.assertIn("elapsed)", err.getvalue())
                         if error is not None:
                             raise error
@@ -516,6 +650,75 @@ class WorkflowTests(unittest.TestCase):
                 self.assertIn("NOT executed", context)
                 self.assertIn("original file and line", context)
                 self.assertNotIn("These documents are local guidance, separate", context)
+
+    def test_default_cli_completes_without_verbose_or_transcript(self):
+        skill = review.architecture.Skill("abc123", "Synthetic specification", {}, "9.8.7")
+        (self.clone / "ARCHITECTURE.md").write_text(
+            f"---\neatmycode_version: {skill.version}\n---\nSource guide.\n")
+        (self.clone / "ARCHITECTURE").mkdir()
+        (self.clone / "ARCHITECTURE/command.md").write_text(
+            f"---\neatmycode_version: {skill.version}\n---\nCommand guide.\n")
+        snapshot = git_io.Source(self.clone, "b" * 40, "c" * 40, "")
+        pr = self.pr | {"number": 1, "headRefOid": "a" * 40, "baseRefName": "main"}
+        formats = {
+            "canonical": lambda reply: reply,
+            "multiline": lambda reply: "RESULT\n" + json.dumps(json.loads(reply[7:]), indent=2),
+            "indented": lambda reply: "  " + reply,
+            "fenced record": lambda reply: "Review complete.\n```json\n" + reply + "\n```",
+            "fenced payload": lambda reply: "RESULT\n```json\n" + reply[7:] + "\n```",
+            "bare JSON": lambda reply: json.dumps(json.loads(reply[7:]), indent=2),
+            "fenced JSON": lambda reply: "```json\n" + json.dumps(json.loads(reply[7:]), indent=2) + "\n```",
+        }
+        cases = [(kind, fields, name, format_reply)
+                 for kind, fields in (("pr", self.fields), ("issue", issue_fields("bug")))
+                 for name, format_reply in formats.items()]
+        for kind, fields, name, format_reply in cases:
+            for verbose in (False, True):
+                replies = [format_reply(reply) for reply in scripted_replies(kind, fields)]
+                if name == "canonical":
+                    replies.insert(0, "Unformatted response sentinel")
+                provider = ScriptedProvider(replies)
+                with self.subTest(kind=kind, verbose=verbose, format=name), ExitStack() as stack:
+                    out = stack.enter_context(redirect_stdout(io.StringIO()))
+                    err = stack.enter_context(redirect_stderr(io.StringIO()))
+                    stack.enter_context(patch("sys.argv", [
+                        "review.py", "--id", "1", "--repo", "a/b", "--branch", "main",
+                        "--api-key", "fake", "--llm-model", "fixture", "--dry-run",
+                        "--workdir", str(self.clone),
+                        *(["--verbose"] if verbose else []),
+                    ]))
+                    stack.enter_context(patch.object(github_io, "ensure_gh_ready"))
+                    stack.enter_context(patch.object(github_io, "detect_kind", return_value=kind))
+                    stack.enter_context(patch.object(github_io, "fetch_pr", return_value=pr))
+                    stack.enter_context(patch.object(github_io, "fetch_issue", return_value={"number": 1}))
+                    pr_post = stack.enter_context(patch.object(github_io, "post_pr_review"))
+                    issue_post = stack.enter_context(patch.object(github_io, "post_issue_comment"))
+                    stack.enter_context(patch.object(git_io, "ensure_clone", return_value=self.clone))
+                    stack.enter_context(patch.object(git_io, "prepare_source", return_value=snapshot))
+                    stack.enter_context(patch.object(review.architecture, "sync_skill", return_value=skill))
+                    stack.enter_context(patch.object(session_builder, "build_provider", return_value=provider))
+                    stack.enter_context(patch.object(review.repo_facts, "collect", return_value="Source facts."))
+                    self.assertEqual(review.main(), 0)
+                    pr_post.assert_not_called()
+                    issue_post.assert_not_called()
+                report = out.getvalue()
+                self.assertIn("## Final verdict: Ready to merge" if kind == "pr" else "## Issue assessment: bug", report)
+                self.assertIn("waiting for model response", err.getvalue())
+                actor = "Lead" if kind == "pr" else "Investigator"
+                self.assertIn(f"[fixture] [{actor}] [review] waiting for model response", err.getvalue())
+                self.assertIn("[fixture] [Verifier] [verify] waiting for model response", err.getvalue())
+                self.assertEqual("requesting one result-format correction" in err.getvalue(), name == "canonical")
+                self.assertIn("Dry run: nothing posted", err.getvalue())
+                self.assertEqual("Unformatted response sentinel" in err.getvalue(), verbose and name == "canonical")
+                self.assertEqual(fields["reason" if kind == "pr" else "response_body"] in err.getvalue(), verbose)
+                self.assertNotIn("RESULT ", report)
+                self.assertEqual(len(provider.calls), len(replies))
+                self.assertEqual({p.relative_to(self.clone).as_posix() for p in self.clone.rglob("*")},
+                                 {"app.py", "ARCHITECTURE.md", "ARCHITECTURE", "ARCHITECTURE/command.md"})
+                if verbose:
+                    self.assertEqual(report, default_report)
+                else:
+                    default_report = report
 
     def test_kind_and_selected_source_precede_one_documentation_gate(self):
         skill = review.architecture.Skill("abc123", "Synthetic upstream specification", {}, "9.8.7")
@@ -667,7 +870,7 @@ class WorkflowTests(unittest.TestCase):
                 finish.assert_not_called()
                 self.assertNotIn("Done: Rechecking PR head and state", err.getvalue())
 
-    def test_local_worktree_isolation_dirty_guard_and_head_check(self):
+    def test_local_worktree_isolation_and_dirty_guard(self):
         git_io.git("init", cwd=self.clone)
         git_io.git("add", "app.py", cwd=self.clone)
         git_io.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
@@ -679,9 +882,7 @@ class WorkflowTests(unittest.TestCase):
         (snapshot / "ARCHITECTURE.md").write_text("Generated locally\n")
         git_io.assert_clone_clean(self.clone)
         self.assertFalse((self.clone / "ARCHITECTURE.md").exists())
-        git_io.require_head(snapshot, head)
-        with self.assertRaises(SystemExit):
-            git_io.require_head(snapshot, "wrong-head")
+        self.assertEqual(git_io.git("rev-parse", "HEAD", cwd=snapshot).stdout.strip(), head)
         (self.clone / "app.py").write_text("Uncommitted work\n")
         with self.assertRaises(SystemExit):
             git_io.assert_clone_clean(self.clone)
@@ -730,6 +931,8 @@ class WorkflowTests(unittest.TestCase):
                 args = review.parse_args()
                 self.assertEqual((args.kind, args.number), expected)
                 self.assertEqual(args.branch, "release/selected")
+                self.assertFalse(args.verbose)
+                self.assertIsNone(args.transcript)
         forwarded = ["--id", "42", "--repo", "old/project", "--dry-run",
                      "--api-base", "https://server", *options, "--dry-run"]
         with patch("sys.argv", ["review.py", *forwarded]):

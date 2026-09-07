@@ -282,19 +282,19 @@ def render_pr(fields: dict, clone: Path, assessments: list[dict], verdict: str,
     findings = sorted(fields["findings"], key=lambda f: SEVERITIES[f["severity"]])
     if verdict == "approve":
         decision = "Ready to merge"
-    elif any(f["severity"] in BLOCKING for f in findings):
-        decision = "Changes requested"
+        instruction = "This PR is ready to merge based on the source review."
     elif any(a["recommendation"] == "reject" for a in assessments):
         decision = "Do not merge"
+        instruction = "Do not merge this PR."
+    elif any(f["severity"] in BLOCKING for f in findings):
+        decision = "Changes requested"
+        instruction = "Do not merge until the major and blocker findings are resolved."
     else:
         decision = "Hold"
+        instruction = "Do not merge yet; resolve the outstanding review concerns."
     lines = [
         f"## PR verdict: {decision}", "", fields["review_body"].strip(), "",
     ]
-    if reasons:
-        lines += [f"- {reason}" for reason in reasons] + [""]
-    if verdict == "approve" and not allow_approve:
-        lines += ["GitHub action: comment. Approval requires `--allow-approve`.", ""]
     lines += ["### Review assessments", "", "| Reviewer | Recommendation | Reason |", "| --- | --- | --- |"]
     lines += [f"| {a['agent']} | {a['recommendation']} | {cell(a['reason'])} |" for a in assessments]
     lines += ["", "## Findings", ""]
@@ -310,6 +310,13 @@ def render_pr(fields: dict, clone: Path, assessments: list[dict], verdict: str,
         check = fields["checklist"][key]
         lines.append(f"| {label} | {check['status']} | {cell(check['note'])} |")
     lines += ["", "</details>", "", "Review scope: documentation and source inspection; target tests were not executed."]
+    lines += ["", f"## Final verdict: {decision}", "", f"**{instruction}**", ""]
+    if reasons:
+        lines += [f"- {reason}" for reason in reasons]
+    else:
+        lines += [one_line(fields["reason"])]
+    if verdict == "approve" and not allow_approve:
+        lines += ["", "GitHub action: comment. Approval requires `--allow-approve`."]
     return "\n".join(lines)
 
 

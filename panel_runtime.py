@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-import sys
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import kerness
 
 import reporting
-from progress import activity
+from progress import activity, emit
 
 PANELS = {
     "pr": (
@@ -27,38 +27,36 @@ PANELS = {
     ),
 }
 PHASES = {"docs": ("plan", "draft", "verify")}
-TITLES = {
-    "Lead": "Lead reviewer",
-    "Dependencies": "Supply chain researcher",
-    "Security": "Security researcher",
-    "Investigator": "Issue investigator",
-    "Verifier": "Independent verifier",
-    "Chair": "Maintainer and release chair",
-    "DocsPlanner": "Architecture planner",
-    "DocsWriter": "Architecture writer",
-    "DocsVerifier": "Architecture verifier",
-}
 
 
 class PanelError(RuntimeError):
     """The panel did not produce a complete, attributable result."""
 
 
+def _phase(kind: str, actor: str, completed: int) -> str:
+    if kind != "docs":
+        return "verify" if actor == "Verifier" else "review"
+    phases = PHASES["docs"]
+    index = completed // len(PANELS["docs"])
+    return phases[index] if index < len(phases) else "summary"
+
+
 class PanelChannel(kerness.Channel):
-    """Show progress on stderr; retain the full conversation only when requested.
+    """Deliver optional verbose exchanges and a requested transcript.
 
     Deliver the transcript directly so a failed write stops the run. Kerness's
     MultiChannel intentionally swallows member errors, which would lose an
     explicitly requested audit trail.
     """
 
-    def __init__(self, kind: str, transcript: Path | None = None, verbose: bool = False):
+    def __init__(self, kind: str, transcript: Path | None = None, verbose: bool = False, model: str = "-"):
         self.kind = kind
         self.verbose = verbose
+        self.model = model
+        self.completed = 0
+        self.actor = "Host"
         self.transcript = kerness.FileChannel(str(transcript)) if transcript else None
         self.destination = transcript
-        self.seats = [name for name, _ in PANELS[kind]]
-        self.completed = 0
 
     def paths(self) -> list[Path]:
         return [self.destination] if self.destination else []
@@ -66,27 +64,17 @@ class PanelChannel(kerness.Channel):
     def send(self, sender: str, message: str) -> None:
         if self.transcript:
             self.transcript.send(sender, message)
+        self.actor = sender
         if self.verbose:
-            print(f"\n[{TITLES.get(sender, sender)} · {sender}]\n{message}", file=sys.stderr, flush=True)
-        if sender in self.seats:
+            emit(message, model=self.model, agent=sender, phase=_phase(self.kind, sender, self.completed))
+        if self.kind == "docs" and sender in {name for name, _ in PANELS["docs"]}:
             self.completed += 1
-            if self.kind == "docs":
-                phases = PHASES["docs"]
-                index = min((self.completed - 1) // len(self.seats), len(phases) - 1)
-                total = len(self.seats) * len(phases)
-                message = (
-                    f"  [docs · phase {index + 1}/{len(phases)}: {phases[index]}] "
-                    f"{TITLES[sender]} completed · specialist turns {self.completed}/{total}"
-                )
-            else:
-                message = f"  [{self.kind} · step {self.completed}] {TITLES[sender]} completed"
-            print(message, file=sys.stderr, flush=True)
 
     def send_system(self, message: str) -> None:
         if self.transcript:
             self.transcript.send_system(message)
-        text = message if self.verbose else " ".join(message.split())[:180]
-        print(f"  [panel] {text}", file=sys.stderr, flush=True)
+        if self.verbose:
+            emit(message, model=self.model, phase=_phase(self.kind, self.actor, self.completed))
 
 
 @dataclass
@@ -101,10 +89,6 @@ class PanelResult:
     assessments: list[dict] = field(default_factory=list)
     usage: dict = field(default_factory=dict)
 
-    @property
-    def final_summary(self) -> str:
-        return self.summary
-
 
 def _final_record(message: dict, prefix: str) -> object:
     agent = message.get("sender")
@@ -112,19 +96,37 @@ def _final_record(message: dict, prefix: str) -> object:
     if not isinstance(content, str) or not content.strip():
         raise PanelError(f"{agent} supplied an empty turn.")
     lines = content.strip().splitlines()
-    records = [line for line in lines if line.startswith(prefix + " ")]
-    if len(records) != 1 or lines[-1] != records[0]:
-        raise PanelError(f"{agent}'s final turn must end with exactly one {prefix} JSON line.")
+    if prefix == "RESULT":
+        # Remove only a complete terminal JSON fence. Keep the original turn
+        # untouched so execution and authenticated replay see the same evidence.
+        if lines[-1].strip() == "```":
+            fences = [i for i, line in enumerate(lines[:-1]) if line.strip().startswith("```")]
+            if not fences or len(fences) % 2 != 1 or lines[fences[-1]].strip() not in {"```", "```json"}:
+                raise PanelError(f"{agent}'s RESULT record has an unmatched JSON code fence.")
+            opening = fences[-1]
+            lines = lines[:opening] + lines[opening + 1:-1]
+        records = [(i, re.match(r"^[ \t]*RESULT(?:[ \t]+|$)", line)) for i, line in enumerate(lines)]
+        records = [(i, match) for i, match in records if match]
+        if len(records) > 1:
+            raise PanelError(f"{agent}'s final turn contains multiple RESULT records.")
+        if records:
+            index, match = records[0]
+            if sum(line.strip().startswith("```") for line in lines[:index]) % 2:
+                raise PanelError(f"{agent}'s RESULT record has an unmatched JSON code fence.")
+            payload = "\n".join([lines[index][match.end():], *lines[index + 1:]]).strip()
+        else:
+            # A response consisting solely of JSON needs no marker; never mine
+            # an object from arbitrary prose or choose between multiple objects.
+            payload = "\n".join(lines).strip()
+    else:
+        records = [line for line in lines if line.startswith(prefix + " ")]
+        if len(records) != 1 or lines[-1] != records[0]:
+            raise PanelError(f"{agent}'s final turn must end with exactly one {prefix} JSON line.")
+        payload = records[0][len(prefix) + 1:]
     try:
-        return json.loads(records[0][len(prefix) + 1:])
+        return json.loads(payload)
     except json.JSONDecodeError as exc:
         raise PanelError(f"{agent}'s {prefix} record is malformed JSON.") from exc
-
-
-def _stage(message: dict, kind: str, clone: Path) -> dict:
-    fields = _final_record(message, "RESULT")
-    reporting.validate_stage(kind, message["sender"], fields, clone)
-    return fields
 
 
 def _assemble_turns(turns: list[dict], kind: str, clone: Path) -> tuple[dict, list[dict]]:
@@ -132,16 +134,29 @@ def _assemble_turns(turns: list[dict], kind: str, clone: Path) -> tuple[dict, li
     first = "Lead" if kind == "pr" else "Investigator"
     if not turns or turns[0].get("sender") != first:
         raise PanelError(f"The {kind} review must start with {first}.")
-    initial = _stage(turns[0], kind, clone)
+    stages = []
+    attempts = iter(turns)
+    for turn in attempts:
+        actor = turn.get("sender")
+        try:
+            fields = _final_record(turn, "RESULT")
+        except PanelError:
+            corrected = next(attempts, None)
+            if corrected is None or corrected.get("sender") != actor:
+                raise PanelError(f"No same-agent format correction was recorded for {actor}.")
+            fields = _final_record(corrected, "RESULT")
+        stages.append((actor, fields))
+    initial = stages[0][1]
+    reporting.validate_stage(kind, first, initial, clone)
     if kind == "pr":
         consultants = [name for name in ("Security", "Dependencies") if name in initial["specialists"]]
         expected = ["Lead", *consultants, "Verifier"]
     else:
         verify = reporting.issue_needs_verification(initial["classification"], initial["verify"])
         expected = ["Investigator", *(["Verifier"] if verify else [])]
-    if [turn.get("sender") for turn in turns] != expected:
+    if [actor for actor, _ in stages] != expected:
         raise PanelError("The recorded turns do not match the required review sequence.")
-    remaining = {turn["sender"]: _stage(turn, kind, clone) for turn in turns[1:]}
+    remaining = dict(stages[1:])
     if kind == "pr":
         consultations = {name: remaining[name] for name in consultants}
         return reporting.assemble_pr(initial, consultations, remaining["Verifier"], clone)
@@ -196,21 +211,54 @@ def _drain(run, step: dict) -> dict:
     return step
 
 
+def _failure(outcome: dict) -> str:
+    """Describe engine failure without echoing provider URLs or response text."""
+    reason = outcome["reason"]["kind"]
+    error = outcome.get("error") or {}
+    detail = next(iter(error), outcome["result"]["end_reason"])
+    if detail == "ProviderHttp":
+        detail += f" HTTP {error[detail]['status_code']}"
+    elif detail == "ProviderNetwork" and "timed out" in error[detail]["cause"].lower():
+        detail += ": request timed out"
+    return f"{reason} ({detail})"
+
+
 def _require_input(step: dict) -> None:
+    if step["status"] == "finished":
+        raise PanelError(f"The review stopped before the next required agent completed: "
+                         f"{_failure(step['outcome'])}.")
     if step["status"] != "waiting" or step.get("reason", {}).get("kind") != "input":
         raise PanelError("The review stopped before the next required agent could complete.")
 
 
-def _review_steps(run, kind: str, clone: Path, committed: list[dict]) -> tuple[dict, list[dict]]:
+def _review_steps(run, kind: str, clone: Path, committed: list[dict], update) -> tuple[dict, list[dict]]:
     _require_input(_drain(run, run.step()))
 
     def select(actor: str, instruction: str) -> dict:
-        before = len(committed)
-        step = run.step({"kind": "select_agent", "agent": actor, "instruction": instruction})
-        _require_input(_drain(run, step))
-        if len(committed) != before + 1 or committed[-1]["sender"] != actor:
-            raise PanelError(f"No authenticated result was recorded for {actor}.")
-        return _stage(committed[-1], kind, clone)
+        for correction in (False, True):
+            before = len(committed)
+            step = run.step({"kind": "select_agent", "agent": actor, "instruction": instruction})
+            _require_input(_drain(run, step))
+            if len(committed) != before + 1 or committed[-1]["sender"] != actor:
+                raise PanelError(f"No authenticated result was recorded for {actor}.")
+            try:
+                fields = _final_record(committed[-1], "RESULT")
+                reporting.validate_stage(kind, actor, fields, clone)
+                return fields
+            except PanelError as exc:
+                if correction:
+                    raise PanelError(
+                        f"{exc} Result-format correction failed: no complete review result was supplied. "
+                        "The model must return the role's JSON result; --verbose only changes logging."
+                    ) from exc
+                update("requesting one result-format correction", agent=actor)
+                instruction += (
+                    f"\nYour previous response did not provide the required result record: {exc} "
+                    "Correct only the result format, preserving your findings, evidence, questions "
+                    "and conclusion. End with exactly one RESULT {JSON} line outside code fences, "
+                    "using your role's exact fields from the gameplan. Use valid single-line JSON "
+                    "with no text after it. This is your only format-correction attempt."
+                )
 
     if kind == "pr":
         lead = select(
@@ -261,20 +309,36 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None) 
         raise PanelError("Review execution requires the source checkout.")
     label = {"pr": "PR review", "issue": "Issue investigation", "docs": "Documentation panel"}[kind]
     detail = "3 phases, 3 specialists" if kind == "docs" else "host-directed steps"
+    models = {agent.name: agent.model for agent in session._agents}
+    model = next(iter(models.values()), "-")
+    seats = {name for name, _ in PANELS[kind]}
+    completed = 0
+    phase = _phase(kind, "Host", completed)
     committed = []
-    with activity(f"{label} ({detail})") as update:
+    with activity(f"{label} ({detail})", model=model, phase=phase) as update:
         def on_event(record: dict) -> None:
+            nonlocal completed, phase
             event = record["event"]
             # Only host-known identities and operation types reach progress.
             # Event payloads can contain source, tool arguments and model text.
             if event["kind"] == "provider_started":
-                actor = TITLES.get(event["actor"], "Panel agent")
-                update(f"{label}: waiting for model response from {actor}")
+                actor = event["actor"]
+                if kind == "docs":
+                    phase = ("summary" if event["purpose"] == "final summary" else
+                             _phase(kind, actor, completed))
+                else:
+                    phase = _phase(kind, actor, completed)
+                update("waiting for model response", model=models[actor], agent=actor, phase=phase)
             elif event["kind"] == "tool_started":
-                actor = TITLES.get(event["identity"]["actor"], "Panel agent")
-                update(f"{label}: {actor} inspecting evidence")
-            elif event["kind"] == "turn_committed" and kind != "docs":
-                committed.append({"sender": event["actor"], "content": event["text"], "msg_type": "turn"})
+                actor = event["identity"]["actor"]
+                update("inspecting evidence", model=models[actor], agent=actor, phase=phase)
+            elif event["kind"] == "turn_committed":
+                actor = event["actor"]
+                if kind != "docs":
+                    committed.append({"sender": actor, "content": event["text"], "msg_type": "turn"})
+                if actor in seats:
+                    completed += 1
+                    update("review turn completed", model=models[actor], agent=actor, phase=phase)
 
         try:
             run = session.start(
@@ -285,7 +349,7 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None) 
             if kind == "docs":
                 step = _drain(run, run.step())
             else:
-                fields, assessments = _review_steps(run, kind, clone, committed)
+                fields, assessments = _review_steps(run, kind, clone, committed, update)
                 step = _drain(run, run.step({"kind": "finish", "result": fields}))
         except kerness.SessionError as exc:
             raise PanelError(f"{label} could not complete: {exc}") from exc
@@ -293,9 +357,7 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None) 
             raise PanelError("The read-only panel unexpectedly requested external input.")
         outcome = step["outcome"]
         if outcome["reason"]["kind"] != "completed" or not outcome["diagnostics"]["valid"]:
-            reason = outcome["reason"]["kind"]
-            detail = outcome.get("error") or outcome.get("diagnostics")
-            raise PanelError(f"Panel ended with {reason}: {detail}")
+            raise PanelError(f"Panel ended with {_failure(outcome)}.")
         raw = outcome["result"]
         if kind != "docs":
             recorded = [
@@ -310,6 +372,6 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None) 
             phase_reached=raw["phase_reached"], end_reason=raw["end_reason"],
             assessments=assessments, usage=outcome["usage"],
         )
-        update(f"{label}: validating participation and final result")
+        update("validating participation and final result", model=model, agent="Host", phase="validate")
         validate_panel(result, kind, clone)
         return result

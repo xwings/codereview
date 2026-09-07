@@ -39,7 +39,7 @@ every case; profile pins and PR/default-branch fallbacks do not apply. Kind
 detection and explicit mismatch rejection precede source preparation. Issues
 use the pinned selected branch; PRs use an isolated local merge of the pinned
 PR head into that branch. The architecture gate checks the root and recursive
-Markdown set on this final source after eatmycode refresh (`review.py:419`, `review.py:310`). All versions
+Markdown set on this final source after eatmycode refresh (`review.py:423`, `review.py:310`). All versions
 must match the fetched skill and every file must fit 35,000 Unicode characters
 to skip the documentation panel. Missing, invalid, older or oversized files
 require a local update; any newer version stops without downgrading. Findings
@@ -48,14 +48,19 @@ GitHub PR-head lines. The final PR metadata comparison invalidates a changed hea
 `finish` owns stdout/posting; `--dry-run` uses the same architecture gate.
 Measured regex facts are bounded leads, not review verdicts (`repo_facts.py:136`).
 
-`progress.activity` announces named steps before synchronous work, prints an
-elapsed-time heartbeat every 15 seconds, and reports success with total duration.
-Its yielded updater identifies the current substep. A scoped thread writes only
+`progress.emit` formats stderr as `[YYYY-MM-DD HH:MM:SS] [model] [agent] [phase]`
+using local wall time. `progress.activity` announces named steps before synchronous
+work, prints a heartbeat every 15 seconds, and reports success with total duration.
+Its yielded updater changes the current message, model, agent and phase together;
+heartbeats retain that context and measure elapsed time with the monotonic clock. A scoped thread writes only
 flushed stderr and is stopped and joined even on exceptions or interruption;
-it does not execute work or impose timeouts. Labels are host-authored and exclude
-provider configuration, request/response bodies and tool arguments. The panel
+it does not execute work or impose timeouts. Status text is host-authored and identifies the configured model but excludes
+credentials, endpoint URLs, request/response bodies and tool arguments. The panel
 runtime shares this helper without importing the CLI. Stdout is flushed before
 publication so a redirected report is available during the GitHub write.
+`--verbose` and `--transcript` are optional; neither enables review execution.
+Without them, the full review, format correction and final report still run.
+Verbosity adds discussion text on stderr and does not change the report.
 
 ## Key Types and Entry Points
 
@@ -69,19 +74,19 @@ publication so a redirected report is available during the GitHub write.
 - `review.py:310` — `prepare_docs`: check the final source's complete architecture
   version and size inventory; return that snapshot as the guide when current.
   Otherwise create a separate retained guide worktree and run preparation; never modify source.
-- `review.py:356` — `handle_pr`: review the prepared local merge source and its
+- `review.py:359` — `handle_pr`: review the prepared local merge source and its
   guide, identify branch/base/review revisions in the topic and report, validate
   the result, then recheck PR head/state before publication.
-- `review.py:399` — `handle_issue`: pinned selected-branch source and its guide,
+- `review.py:402` — `handle_issue`: pinned selected-branch source and its guide,
   branch/revision scope, investigation with conditional verification, cited response and optional suggested
   labels on stderr.
-- `review.py:419` — `main`: authenticate, detect kind, fetch applicable metadata,
+- `review.py:423` — `main`: authenticate, detect kind, fetch applicable metadata,
   prepare selected-branch/local-merge source, refresh eatmycode, gate the final
   architecture set, then run the corresponding panel. Conflicts and changed fetched PR
   heads stop before documentation, model calls or posting.
 - `repo_facts.py:136` — `collect`: deterministic leads for style, duplication and
   dependency reviewers; these regex-based measurements are not verdicts.
-- `progress.py:15` — `activity`: context manager yielding a status updater;
+- `progress.py:22` — `activity`: context manager yielding a status updater;
   emits immediate/periodic stderr, joins its ticker on every exit and emits
   completion only on success. The launcher forwards this output directly.
 
@@ -104,11 +109,16 @@ python3 -m py_compile review.py progress.py repo_facts.py
 Expected: all tests pass, compile exits 0, help includes required `--branch`,
 `--id`, `--verbose`, `--dry-run` and `--allow-approve`. Stdout from a review contains only Markdown;
 progress and suggested labels go to stderr. The heartbeat lifecycle test proves
-visible output during blocked work and cleanup on success, error and interruption.
+timestamped model/agent/phase output during blocked work, context updates and
+cleanup on success, error and interruption.
 Routing tests prove identification precedes source/docs work, issues use exactly
 the selected branch, PRs use the local merge, and documentation is prepared once.
 The scripted integration tests use the real kerness engine, without network
 model calls or GitHub writes.
+The default CLI integration case uses real argument parsing, architecture reuse,
+session execution, report rendering and completion without a transcript; PR and
+issue reports match with verbosity omitted or enabled, including format correction
+and direct acceptance of complete indented, multiline, fenced or bare JSON results.
 
 ## Review and Refactor Guide
 

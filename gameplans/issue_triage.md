@@ -9,8 +9,8 @@ agents:
     min: 2
     max: 2
 loop:
-  max_turns: 2
-  max_rounds: 1
+  max_turns: 4
+  max_rounds: 2
   verdict_rethink: false
 tools:
   - read_file
@@ -50,6 +50,10 @@ classification except straightforward `support` or `needs_information`.
 There are no phases, chair routing, merge recommendations or closing model call.
 The host renders the final answer after these steps; surviving uncertainty is
 reported rather than causing repeated investigations.
+If a result is missing or malformed, the host permits that same agent one
+format-correction turn before proceeding. Preserve the evidence, questions and
+conclusion; this additional turn only repairs the result format. The default
+ceiling includes these corrections; an explicit turn limit still applies.
 
 Read the prepared architecture guide, related module documents and the relevant
 full source on the selected branch. Confirm architecture claims against source.
