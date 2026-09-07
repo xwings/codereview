@@ -1,8 +1,7 @@
 """Assembles the kerness session: provider, agents, tool registry, access policy.
 
-The harness itself is declared in `gameplans/`, not here. This module only
-binds the declaration to this run — which checkout the agents may read, which
-endpoint they talk to, and who sits on the panel.
+Gameplans declare tools and result contracts; panel_runtime owns review routing.
+This module binds the checkout, endpoint and agents for one run.
 """
 
 from __future__ import annotations
@@ -18,8 +17,7 @@ ROOT = Path(__file__).resolve().parent
 GAMEPLANS = ROOT / "gameplans"
 PERSONAS = ROOT / "personas"
 
-# Panel seat -> persona file. The order is the order of the seven checks, and
-# the gameplan requires exactly this many participants.
+# Registered agents include optional PR consultants; the runtime selects them.
 PR_PANEL = PANELS["pr"]
 ISSUE_PANEL = PANELS["issue"]
 DOCS_PANEL = PANELS["docs"]
@@ -56,7 +54,7 @@ def _build(
     allowed_files = [str(transcript.resolve())] if transcript else []
     if documentation is not None:
         docs_root = documentation.resolve()
-        documents = [docs_root / "ARCHITECTURE.md", *sorted((docs_root / "ARCHITECTURE").glob("*.md"))]
+        documents = [docs_root / "ARCHITECTURE.md", *sorted((docs_root / "ARCHITECTURE").rglob("*.md"))]
         for path in documents:
             resolved = path.resolve()
             if not resolved.is_relative_to(docs_root) or not resolved.is_file():
@@ -69,12 +67,19 @@ def _build(
         # and an explicitly requested transcript, never the whole docs tree.
         allowed_files=allowed_files,
     )
+    # Kerness otherwise supplies the gameplan body only to an orchestrator.
+    # These reviews have no chair, so every participant needs the wire contract.
+    instructions = None
+    if kind != "docs":
+        contract = kerness.load_gameplan(str(GAMEPLANS / gameplan)).body
+        instructions = "You are {bot_name}. Follow your role's protocol below.\n\n" + contract
 
     session = kerness.Session(
         gameplan=str(GAMEPLANS / gameplan),
         topic=topic,
         provider=provider,
         channel=PanelChannel(kind, transcript, verbose),
+        system_prompt=instructions,
         access_policy=policy,
         max_turns=max_turns,
         turn_delay_sec=0,
@@ -87,10 +92,10 @@ def _build(
 
     for name, persona in panel:
         session.add_agent(name, model=model, persona=str(PERSONAS / persona))
-    # `role` is what seats the chair; an agent that names none is a participant.
-    session.add_agent(
-        CHAIR[0], model=model, persona=str(PERSONAS / CHAIR[1]), role="orchestrator"
-    )
+    if kind == "docs":
+        session.add_agent(
+            CHAIR[0], model=model, persona=str(PERSONAS / CHAIR[1]), role="orchestrator"
+        )
 
     for tool_name, description, schema, handler in tools:
         session.add_tool(tool_name, description, schema, handler)

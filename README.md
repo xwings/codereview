@@ -1,9 +1,9 @@
 # codereview
 
 A branch-based review CLI for GitHub pull requests and issues. It uses
-a panel of specialist agents to inspect architecture and source, challenge
-findings, and produce a clear report. Every PR specialist and the chair votes
-on whether the change is ready to merge.
+a lead reviewer to inspect architecture and source, with independent
+verification for every PR and for issues that need it. The result is one
+evidence-backed report with explicit findings and remaining questions.
 
 ## Setup
 
@@ -64,21 +64,33 @@ branch pins; there is no default project or branch.
    merge it locally into the selected branch snapshot. A conflict or changed
    fetched head stops before documentation, model calls or posting.
 3. Fetch the latest [eatmycode](https://github.com/xwings/eatmycode) specification
-   and check only the final source's root `ARCHITECTURE.md` version, once. A
-   matching version skips documentation preparation. A missing root or an
-   absent, invalid or older version runs the documentation panel in a separate
-   local guide worktree.
+   and read its `metadata.version`. Check the final source's `ARCHITECTURE.md`
+   and every Markdown file recursively under `ARCHITECTURE/`. If all versions
+   match and every file is at most 35,000 characters, proceed. Missing docs,
+   absent/invalid/older stamps or oversized files run the documentation panel
+   with the fetched skill in a separate local guide worktree.
 4. Read the source architecture, prepared guide when needed, related module
-   docs and full source. For a PR: study → review → debate → verify → vote.
-   For an issue: study → investigate → verify → answer.
+   docs and full source. For a PR: lead review → optional focused consultation
+   → independent verification. For an issue: investigate → verify if needed.
 5. Validate and print one report identifying the selected branch and reviewed
    revisions. Unless `--dry-run` is set, post it as a PR review or issue comment.
 
-PR seats cover language conventions, API design, refactoring, code quality,
-architecture, supply-chain risk and security. Each specialist casts its own
-ballot; the chair cannot invent missing votes. Approval requires unanimous
-support, complete passing checks, justified need and no unresolved major or
-blocker findings. A hold is reported as a hold, rather than a rejection.
+PRs normally need two review turns: **Lead** reviews all seven checks, then
+**Verifier** independently checks the evidence and conclusions. Style and naming
+remain separate checks within the same review. Lead can request Security or
+Dependencies once each for a concrete question before verification. The host
+selects the reviewers directly; there are no chair-routing, debate, voting or
+closing-draft rounds. Tool use can require multiple model requests within a turn.
+
+Every proposed finding must be confirmed, withdrawn with cited evidence, or
+reported as unresolved. Approval requires both reviewers to recommend merging,
+all seven checks to pass, justified need, no unresolved questions, and no major
+or blocker findings. Differing recommendations stay visible in the report.
+
+Straightforward support or missing-information issues can finish after one
+investigation. Other classifications, uncertainty, or an explicit request by
+the investigator require one independent verification. Remaining uncertainty is
+reported without starting another review loop.
 
 The PR merge exists only in the isolated local source repository. The tool
 never merges a PR on GitHub, pushes, closes PRs/issues or applies labels. It
@@ -99,7 +111,7 @@ GitHub. Generated guide edits are excluded from citations.
 | --- | --- |
 | `--id number` | Identify a PR or issue automatically. |
 | `--branch name` | Required remote branch for issue analysis and the local PR merge. |
-| `--dry-run` | Print the report without posting; documentation uses the same root-version gate. |
+| `--dry-run` | Print the report without posting; documentation uses the same architecture version-and-size gate. |
 | `--allow-approve` | Permit a real GitHub approval after all approval gates pass. Otherwise post a comment. |
 | `--verbose` | Add the full panel discussion to the default progress output on stderr. |
 | `--transcript path.txt` | Save the discussion; a documentation panel uses a sibling `*-pr-N-docs` or `*-issue-N-docs` file. |
@@ -111,8 +123,9 @@ GitHub. Generated guide edits are excluded from citations.
 The API key and model also accept `--api-key` and `--llm-model`. Credentials
 are not written into session files. See `./code.sh --help` for all options.
 
-Progress shows each preparation step, the specialist waiting for a model
-response or inspecting evidence, and completed turns within each panel phase.
+Progress shows each preparation step, the reviewer waiting for a model
+response or inspecting evidence, and completed review turns. Documentation
+preparation also reports its phases.
 While work is running, a heartbeat reports the current activity and elapsed
 time every 15 seconds, including during slow Git, GitHub and model requests.
 Successful steps show their total duration. This is enabled by default;
@@ -132,20 +145,24 @@ Inspect its diff before copying it into the target project. After preserving
 any desired docs, remove guide worktrees with `git worktree remove` from their
 source repository; independent source directories can then be removed.
 
-The latest eatmycode check needs network access on every invocation. A fetch
-failure or an unsupported upstream contract change stops the run instead of
-silently accepting old rules. The integration supports eatmycode 1.1.0, including
-versioned architecture and its root/module templates. An older or unversioned
-root triggers content audit and migration; a newer root stops preflight until
-the integration is updated. Original agent guidance and replaced or
-removed documents are preserved in `ARCHITECTURE-ARCHIVE.md` in the local
-documentation worktree when preparation runs, outside the coding documentation set.
-Model calls can be substantial: a PR includes
-at most one documentation panel plus the five-phase review panel. A current root
-version skips preparation immediately: no module checks, structure/link/source
-validation, guidance migration, documentation worktree or model calls. Existing
-docs are read from the source snapshot. This version check does not certify
-document contents; the PR/issue panel still inspects full relevant source.
+The latest eatmycode check needs network access on every invocation. It follows
+upstream's default-branch HEAD and reads the version and shared rules from its
+`SKILL.md`; no pinned release or specification fingerprint gates the run.
+A failed fetch or malformed specification stops preflight. A newer version in
+any architecture file also stops without changing that file, preventing a
+downgrade. Missing, invalid or older stamps trigger content migration against
+the fetched skill, and oversized files must be split into linked pages.
+Original agent guidance and replaced or removed documents are preserved in
+`ARCHITECTURE-ARCHIVE.md` in the local documentation worktree, outside the
+coding documentation set.
+
+Model calls can be substantial: a PR includes at most one documentation panel
+plus two to four review turns. A current doc set within the size limit skips
+the documentation panel, worktree creation and guidance migration. This gate
+checks versions and sizes; it does not certify content, links or complete
+subsystem coverage. The PR/issue panel still inspects full relevant source.
+`tests/test_architecture.py` uses synthetic versions for offline regression
+coverage; it is never executed as part of a review.
 
 ## Development
 

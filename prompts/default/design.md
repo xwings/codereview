@@ -9,7 +9,7 @@
 > `prompts/repos/<owner>/<name>/design.md`. No code changes needed.
 
 **The overriding rule: the repository beats this file.** Everything below is a
-general prior. The baseline you established in the `study_repo` phase is the
+general prior. The baseline you established by reading architecture and full source is the
 evidence. Where the two disagree, the repository wins, and a rule you cannot
 point at a file for is not a rule — you may not demand it of a contributor.
 
@@ -51,7 +51,7 @@ Record one conclusion in the Fit checklist note, with its evidence or reason:
   imply a blocker.
 
 Missing justification is not evidence that a PR is unnecessary. Both unclear
-and unnecessary need require `verdict = "comment"`, even with no code findings.
+and unnecessary need require a hold or reject recommendation, even with no code findings.
 
 ### Layering & boundaries
 
@@ -119,13 +119,14 @@ Derive the project's boundaries from the tree, then judge against them:
 
 ## Approve threshold
 
-Use `verdict = "approve"` ONLY if:
+Recommend `merge` ONLY if:
 
 - Zero `blocker` findings, AND
 - Zero `major` findings, AND
 - The pull request is not a draft, AND
 - The pull request description (or commits) make the intent clear, AND
-- Fit established `Need: justified` in verify and recorded the evidence in its
+- The Fit check established `Need: justified` during verification and recorded the evidence in its
   checklist note.
 
-Otherwise, use `verdict = "comment"`.
+Otherwise, recommend `hold` for missing evidence or needed repairs, or `reject`
+when the proposal should not proceed in its current direction.

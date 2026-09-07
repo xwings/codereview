@@ -18,7 +18,9 @@ current eatmycode specification in the topic; inherited architecture is useful
 evidence but may be stale. Compare active and recorded versions first; a stale
 root requires the whole set to migrate. Plan all required root/module sections,
 coding-only content, and removal of non-coding-only modules with repaired links.
-Never downgrade newer documents or certify migration by changing stamps alone.
+Inventory nested supporting pages too, measure every file against the 35,000-character
+limit, and plan splits with owner/Index links. Never downgrade newer documents
+or certify migration by changing stamps alone.
 
 ## Communication Style
 

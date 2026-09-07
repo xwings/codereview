@@ -18,7 +18,10 @@ Index and interaction links resolve, source references are current, durable
 agent guidance survives, and commands/status claims reflect actual evidence.
 Verify active and recorded versions, the complete Root Contract and ten module
 sections, coding-only content, and removal of non-coding-only modules and stale
-links. Stamps must certify content/structure migration, never replace it.
+links. Check every recursive supporting page has a title, owner backlink and
+Index route, and every file is at most 35,000 Unicode characters including
+frontmatter and line endings. Stamps must certify content/structure migration,
+never replace it.
 Source inspection cannot prove tests passed or satisfy the full release gate.
 
 ## Communication Style

@@ -7,7 +7,6 @@ commands, commits, or pushes. A successful preflight is not a test/CI pass.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import tempfile
@@ -32,14 +31,11 @@ MODULE_HEADERS = (
 )
 AGENT_FILES = ("AGENT.md", "AGENTS.md", "CLAUDE.md")
 ARCHIVE_PATH = "ARCHITECTURE-ARCHIVE.md"
-DOC_PATH = re.compile(r"ARCHITECTURE/[A-Za-z0-9][A-Za-z0-9._-]*\.md\Z")
+DOC_PATH = re.compile(r"ARCHITECTURE/(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md\Z")
 SOURCE_REF = re.compile(r"(?<![\w/:])([\w.@+/-]+\.[A-Za-z_][\w+-]*):([0-9]+)(?:-([0-9]+))?")
 LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\n]+)\)")
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
-# Hash of the supported upstream contract with the three shared sections
-# replaced by their names. New shared wording is adopted automatically; an
-# unfamiliar workflow/template requires an integration update, not a guess.
-SUPPORTED_CONTRACT = "2d90e37666f95cd48fea2402338afb8f48a0bd2cc1b5d54ca8afb9423d2ddd06"
+MAX_DOCUMENT_CHARACTERS = 35_000
 
 
 class ArchitectureError(ValueError):
@@ -64,11 +60,10 @@ class Report:
 
     def context(self) -> str:
         modules = "\n".join(f"- {path}" for path in self.documents if path != "ARCHITECTURE.md")
-        if not self.audited:
-            modules = "Inspect ARCHITECTURE/ when present; module files were not inventoried."
         status = ("Documentation is structurally checked and source-audited."
                   if self.audited else
-                  "Only the root ARCHITECTURE.md version was checked; documentation "
+                  "Architecture versions and sizes were checked for the root and all "
+                  "Markdown files recursively under ARCHITECTURE/; documentation "
                   "preparation and source audit were skipped.")
         return (
             f"eatmycode revision: {self.revision}\n"
@@ -116,19 +111,18 @@ def _section(text: str, name: str) -> str:
     return text[start:end].rstrip() + "\n"
 
 
-def _contract_hash(text: str) -> str:
-    for name in SHARED_HEADERS:
-        block = _section(text, name)
-        text = text.replace(block, f"## {name}\n[shared section]\n", 1)
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
 def _version(text: str, key: str = "eatmycode_version") -> tuple[int, int, int] | None:
     """Read a stable SemVer from the supported YAML frontmatter form."""
-    frontmatter = re.match(r"\A---\n(.*?)\n---(?:\n|\Z)", text, re.DOTALL)
+    frontmatter = re.match(r"\A---\n(.*?)\n---(?:\n|\Z)", text.replace("\r\n", "\n"), re.DOTALL)
     if not frontmatter:
         return None
-    values = re.findall(rf"^{re.escape(key)}:[ \t]*(.*)$", frontmatter[1], re.MULTILINE)
+    metadata = frontmatter[1]
+    if key == "metadata.version":
+        blocks = re.findall(r"^metadata:[ \t]*\n((?:[ \t]+[^\n]*\n|\n)*)", metadata + "\n", re.MULTILINE)
+        if len(blocks) != 1:
+            return None
+        metadata, key = blocks[0], "  version"
+    values = re.findall(rf"^{re.escape(key)}:[ \t]*(.*)$", metadata, re.MULTILINE)
     if len(values) != 1:
         return None
     match = re.fullmatch(
@@ -163,12 +157,7 @@ def sync_skill(cache: Path) -> Skill:
     if path.is_symlink() or not path.is_file():
         raise ArchitectureError("upstream eatmycode SKILL.md must be a regular file")
     text = _read_document(path)
-    if _contract_hash(text) != SUPPORTED_CONTRACT:
-        raise ArchitectureError(
-            f"eatmycode {revision} changed its supported contract; update the "
-            "architecture integration before reviewing with these rules"
-        )
-    version = _version(text, "  version")
+    version = _version(text, "metadata.version")
     if version is None:
         raise ArchitectureError("upstream eatmycode metadata.version must be stable SemVer")
     return Skill(revision, text, {name: _section(text, name) for name in SHARED_HEADERS},
@@ -178,38 +167,44 @@ def sync_skill(cache: Path) -> Skill:
 def _read_document(path: Path) -> str:
     if path.stat().st_size > MAX_DOCUMENT_BYTES:
         raise ArchitectureError(f"architecture input exceeds {MAX_DOCUMENT_BYTES} bytes: {path}")
-    return path.read_text(encoding="utf-8")
+    return path.read_bytes().decode("utf-8")
 
 
 def _document_path(clone: Path, name: str) -> Path:
     if name != "ARCHITECTURE.md" and not DOC_PATH.fullmatch(name):
         raise ArchitectureError(f"unsupported architecture output path: {name!r}")
     path = clone / name
-    if path.is_symlink() or path.parent.is_symlink():
-        raise ArchitectureError(f"architecture output must not traverse a symlink: {name}")
+    for component in (path, *path.parents):
+        if component == clone:
+            break
+        if component.is_symlink():
+            raise ArchitectureError(f"architecture output must not traverse a symlink: {name}")
+        if component != path and component.exists() and not component.is_dir():
+            raise ArchitectureError(f"architecture parent must be a directory: {name}")
     if path.exists() and not path.is_file():
         raise ArchitectureError(f"architecture output is not a regular file: {name}")
     return path
 
 
 def reuse_current(clone: Path, skill: Skill) -> Report | None:
-    """Reuse the source guide solely when its root records the current version."""
-    path = _document_path(clone.resolve(), "ARCHITECTURE.md")
-    if not path.exists():
-        return None
-    root = _read_document(path)
-    recorded = _version(root)
+    """Reuse a complete version-current, size-compliant architecture inventory."""
+    documents = _existing_documents(clone.resolve())
     version = tuple(int(part) for part in skill.version.split("."))
-    if recorded is not None and recorded > version:
-        raise ArchitectureError(
-            f"ARCHITECTURE.md requires newer eatmycode {'.'.join(map(str, recorded))}; "
-            f"active version is {skill.version}. Preserve these docs and update the integration"
-        )
-    if recorded != version:
+    current = "ARCHITECTURE.md" in documents and len(documents) >= 2
+    for name, content in documents.items():
+        recorded = _version(content)
+        if recorded is not None and recorded > version:
+            raise ArchitectureError(
+                f"{name} requires newer eatmycode {'.'.join(map(str, recorded))}; "
+                f"active version is {skill.version}. Preserve these docs and use newer upstream rules"
+            )
+        if recorded != version or len(content) > MAX_DOCUMENT_CHARACTERS:
+            current = False
+    if not current:
         return None
     return Report(
-        skill.revision, (), {"ARCHITECTURE.md": root},
-        "Root architecture version is current; documentation preparation and source audit were skipped.",
+        skill.revision, (), documents,
+        "Architecture versions and sizes are current; documentation preparation and source audit were skipped.",
         audited=False,
     )
 
@@ -220,9 +215,17 @@ def _existing_documents(clone: Path) -> dict[str, str]:
         raise ArchitectureError("ARCHITECTURE must be a regular directory")
     names = ["ARCHITECTURE.md"]
     if directory.exists():
-        names.extend(str(path.relative_to(clone)) for path in sorted(directory.rglob("*.md")))
+        def walk_error(error):
+            raise error
+
+        for parent, directories, files in os.walk(directory, onerror=walk_error, followlinks=False):
+            for name in directories:
+                if (Path(parent) / name).is_symlink():
+                    raise ArchitectureError(f"architecture directory must not be a symlink: {Path(parent) / name}")
+            names.extend((Path(parent) / name).relative_to(clone).as_posix()
+                         for name in files if name.endswith(".md"))
     result = {}
-    for name in names:
+    for name in sorted(names):
         path = _document_path(clone, name)
         if path.exists():
             result[name] = _read_document(path)
@@ -277,6 +280,20 @@ def _link_target(clone: Path, name: str, link: str, documents: dict[str, str],
     key = target.relative_to(clone).as_posix()
     if key in removed or (key not in documents and not target.exists()):
         raise ArchitectureError(f"broken link in {name}: {link}")
+    if parsed.fragment:
+        content = documents[key] if key in documents else _read_document(target)
+        anchors = set()
+        for _, line in _unfenced(content):
+            heading = re.match(r"^#{1,6}\s+(.+?)(?:\s+#+)?\s*$", line)
+            if heading:
+                slug = re.sub(r"[^\w\- ]", "", heading[1].lower()).replace(" ", "-")
+                anchor, suffix = slug, 0
+                while anchor in anchors:
+                    suffix += 1
+                    anchor = f"{slug}-{suffix}"
+                anchors.add(anchor)
+        if unquote(parsed.fragment) not in anchors:
+            raise ArchitectureError(f"broken anchor in {name}: {link}")
     return key
 
 
@@ -292,8 +309,8 @@ def validate_documents(clone: Path, documents: dict[str, str], skill: Skill,
         _document_path(clone, name)
         if not isinstance(content, str) or not content.strip():
             raise ArchitectureError(f"architecture document is empty or not text: {name}")
-        if len(content.encode()) > MAX_DOCUMENT_BYTES:
-            raise ArchitectureError(f"architecture document is too large: {name}")
+        if len(content) > MAX_DOCUMENT_CHARACTERS:
+            raise ArchitectureError(f"architecture document exceeds {MAX_DOCUMENT_CHARACTERS} characters: {name}")
         if _version(content) != version:
             raise ArchitectureError(f"architecture must be audited at eatmycode {skill.version}: {name}")
         prose = "".join(line for _, line in _unfenced(content))
@@ -330,9 +347,31 @@ def validate_documents(clone: Path, documents: dict[str, str], skill: Skill,
         _link_target(clone, "ARCHITECTURE.md", link, documents, removed)
         for link in LINK.findall(_section(root, "Index"))
     }
-    modules = set(documents) - {"ARCHITECTURE.md"}
-    if {path for path in indexed if path and path.startswith("ARCHITECTURE/")} != modules:
-        raise ArchitectureError("Index must link every owning module and no missing module")
+    links = {
+        name: {_link_target(clone, name, link, documents, removed)
+               for link in LINK.findall("".join(line for _, line in _unfenced(content)))} & documents.keys()
+        for name, content in documents.items()
+    }
+    reachable = {"ARCHITECTURE.md"}
+    pending = list(indexed & documents.keys())
+    while pending:
+        name = pending.pop()
+        if name not in reachable:
+            reachable.add(name)
+            pending.extend(links[name] - reachable)
+    if reachable != documents.keys():
+        raise ArchitectureError("Index must reach every owning module and supporting page")
+    modules = {name for name, content in documents.items() if name != "ARCHITECTURE.md"
+               and any(title in {"Goal", "Code Structure"} for title, _, _ in _sections(content))}
+    if not modules:
+        raise ArchitectureError("architecture requires at least one owning module")
+    for name in documents.keys() - modules - {"ARCHITECTURE.md"}:
+        if not any(re.match(r"^#\s+\S", line) for _, line in _unfenced(documents[name])):
+            raise ArchitectureError(f"supporting page requires a descriptive title: {name}")
+        if not links[name] & (modules | {"ARCHITECTURE.md"}):
+            raise ArchitectureError(f"supporting page must link to its root or module owner: {name}")
+        if any(title in SHARED_HEADERS for title, _, _ in _sections(documents[name])):
+            raise ArchitectureError(f"supporting page must not repeat shared rules: {name}")
     for name in sorted(modules):
         content = documents[name]
         if [title for title, _, _ in _sections(content)] != list(MODULE_HEADERS):
@@ -403,7 +442,7 @@ def _apply(clone: Path, documents: dict[str, str], removed: set[str]) -> tuple[s
     changes.update({name: None for name in AGENT_FILES if not (clone / name).is_symlink()})
     if not changes:
         return ()
-    created_directory = not (clone / "ARCHITECTURE").exists()
+    created_directories = []
     with tempfile.TemporaryDirectory(prefix=".architecture-stage-", dir=clone) as stage:
         staged = Path(stage)
         backups = staged / "backups"
@@ -416,9 +455,16 @@ def _apply(clone: Path, documents: dict[str, str], removed: set[str]) -> tuple[s
                 path.write_text(content, encoding="utf-8")
         applied = []
         try:
-            (clone / "ARCHITECTURE").mkdir(exist_ok=True)
             for i, name in enumerate(changes):
                 target = clone / name
+                missing = []
+                parent = target.parent
+                while not parent.exists():
+                    missing.append(parent)
+                    parent = parent.parent
+                for directory in reversed(missing):
+                    directory.mkdir()
+                    created_directories.append(directory)
                 backup = backups / str(i)
                 if target.exists() or target.is_symlink():
                     os.replace(target, backup)
@@ -431,8 +477,8 @@ def _apply(clone: Path, documents: dict[str, str], removed: set[str]) -> tuple[s
                     target.unlink()
                 if backup.exists() or backup.is_symlink():
                     os.replace(backup, target)
-            if created_directory:
-                (clone / "ARCHITECTURE").rmdir()
+            for directory in reversed(created_directories):
+                directory.rmdir()
             raise
     return tuple(changes)
 
@@ -444,14 +490,6 @@ def prepare(clone: Path, skill: Skill, generate: Callable[[str], dict]) -> Repor
     if report is not None:
         return report
     existing = _existing_documents(clone)
-    version = tuple(int(part) for part in skill.version.split("."))
-    for name, content in existing.items():
-        recorded = _version(content)
-        if recorded is not None and recorded > version:
-            raise ArchitectureError(
-                f"{name} requires newer eatmycode {'.'.join(map(str, recorded))}; "
-                f"active version is {skill.version}. Preserve these docs and update the integration"
-            )
     guidance = _agent_guidance(clone)
     topic = (
         "Prepare architecture for this review checkout after branch selection "
@@ -465,10 +503,10 @@ def prepare(clone: Path, skill: Skill, generate: Callable[[str], dict]) -> Repor
         "semantic accuracy and current file:line references. Audit even if "
         "documents already exist and have the right headers. Resolve every "
         "discoverable fact from source; return audited=false if incomplete.\n\n"
-        "Only ARCHITECTURE.md and direct ARCHITECTURE/<module>.md outputs are "
+        "Only ARCHITECTURE.md and Markdown outputs recursively under ARCHITECTURE/ are "
         "accepted. Return documents as a path-to-complete-text dictionary; "
         "unchanged files may be omitted. Use null only to remove an existing "
-        "direct module devoted to non-coding guidance, and repair its links "
+        "module or supporting page devoted to non-coding guidance, and repair its links "
         "and Index entry. Never delete the root. Keep only coding context in "
         "architecture; remove deployment, operations, business and tutorial "
         "content, including fenced historical guidance. The host preserves "
@@ -477,8 +515,14 @@ def prepare(clone: Path, skill: Skill, generate: Callable[[str], dict]) -> Repor
         "Run the version/freshness gate before trusting existing docs. Refresh "
         "stale content and structure, not just stamps. Preserve stamps while "
         "drafting; return current eatmycode_version frontmatter only after "
-        "the final source audit, stamping the root after every module passes. "
-        "Required version migration: the entire doc set.\n\n"
+        "the final source audit, stamping the root after every module and supporting page passes. "
+        "A stale root requires the entire doc set; otherwise refresh stale files and affected owners/Index links. "
+        f"Every architecture file must be at most {MAX_DOCUMENT_CHARACTERS} Unicode characters, "
+        "including frontmatter, whitespace and line endings. Measure every file, even at the current version; "
+        "split oversized files into linked supporting pages under ARCHITECTURE/. "
+        "Supporting pages need version frontmatter, a descriptive title, a link to their root or module owner, "
+        "and topic-specific headings without repeating module or shared sections. "
+        "Make all pages reachable from their owner and the root Index, directly or through linked index pages.\n\n"
         "Keep the three shared sections verbatim, before an exact ## Index. "
         "Use the exact Root Contract and module headings, a Code Structure "
         "table with backtick repository-relative paths, 1–10 current file:line references, and "
@@ -512,7 +556,7 @@ def prepare(clone: Path, skill: Skill, generate: Callable[[str], dict]) -> Repor
         _document_path(clone, name)
         if content is None:
             if name == "ARCHITECTURE.md" or name not in existing:
-                raise ArchitectureError(f"only existing owning modules can be removed: {name}")
+                raise ArchitectureError(f"only existing modules or supporting pages can be removed: {name}")
             removed.add(name)
             del documents[name]
         else:

@@ -1,5 +1,5 @@
 ---
-eatmycode_version: "1.1.0"
+eatmycode_version: "1.2.0"
 ---
 # Workflow and launcher
 
@@ -38,12 +38,14 @@ model execution and I/O. Required `--branch` selects the remote branch for
 every case; profile pins and PR/default-branch fallbacks do not apply. Kind
 detection and explicit mismatch rejection precede source preparation. Issues
 use the pinned selected branch; PRs use an isolated local merge of the pinned
-PR head into that branch. The root-version gate runs once on this final source
-after eatmycode refresh (`review.py:419`, `review.py:310`). Only a missing or
-outdated root runs the documentation panel. Findings cite the selected or
-merged source, never generated guide lines; PR locations can differ from
+PR head into that branch. The architecture gate checks the root and recursive
+Markdown set on this final source after eatmycode refresh (`review.py:419`, `review.py:310`). All versions
+must match the fetched skill and every file must fit 35,000 Unicode characters
+to skip the documentation panel. Missing, invalid, older or oversized files
+require a local update; any newer version stops without downgrading. Findings
+cite the selected or merged source, never generated guide lines; PR locations can differ from
 GitHub PR-head lines. The final PR metadata comparison invalidates a changed head, base, state or draft flag.
-`finish` owns stdout/posting; `--dry-run` uses the same root-version gate.
+`finish` owns stdout/posting; `--dry-run` uses the same architecture gate.
 Measured regex facts are bounded leads, not review verdicts (`repo_facts.py:136`).
 
 `progress.activity` announces named steps before synchronous work, prints an
@@ -64,18 +66,18 @@ publication so a redirected report is available during the GitHub write.
   profile, rubric, style reference, measured facts, PR metadata and the pinned
   local merge diff.
 - `review.py:274` — `build_issue_topic`: architecture, source context and issue.
-- `review.py:310` — `prepare_docs`: check the final source's root version;
-  return that snapshot as the guide immediately when current. Otherwise create
-  a separate retained guide worktree and run preparation; never modify source.
+- `review.py:310` — `prepare_docs`: check the final source's complete architecture
+  version and size inventory; return that snapshot as the guide when current.
+  Otherwise create a separate retained guide worktree and run preparation; never modify source.
 - `review.py:356` — `handle_pr`: review the prepared local merge source and its
   guide, identify branch/base/review revisions in the topic and report, validate
   the result, then recheck PR head/state before publication.
 - `review.py:399` — `handle_issue`: pinned selected-branch source and its guide,
-  branch/revision scope, triage panel, cited response and optional suggested
+  branch/revision scope, investigation with conditional verification, cited response and optional suggested
   labels on stderr.
 - `review.py:419` — `main`: authenticate, detect kind, fetch applicable metadata,
   prepare selected-branch/local-merge source, refresh eatmycode, gate the final
-  root once, then run the corresponding panel. Conflicts and changed fetched PR
+  architecture set, then run the corresponding panel. Conflicts and changed fetched PR
   heads stop before documentation, model calls or posting.
 - `repo_facts.py:136` — `collect`: deterministic leads for style, duplication and
   dependency reviewers; these regex-based measurements are not verdicts.
@@ -88,7 +90,7 @@ publication so a redirected report is available during the GitHub write.
 [Architecture preflight](architecture-preflight.md) prepares the guide.
 [Git](git-io.md) owns isolated source repositories, guide worktrees and revision
 consistency; [GitHub](github-io.md) owns resource detection and publication. [Harness](harness.md) returns strict
-results; [reporting](reporting.md) decides approval eligibility and renders it.
+results and authenticated assessments; [reporting](reporting.md) decides approval eligibility and renders it.
 [Profiles](prompts.md) supplement the source's facts.
 
 ## How to Test
@@ -121,8 +123,8 @@ its success check is accurate measured leads without changing report policy.
 
 ## Open Gaps / Roadmap
 
-- The final source checks the root version once. A missing/outdated root adds
-  a model audit; a current root skips all documentation preparation.
+- Current architecture versions and sizes skip the documentation audit, so
+  undetected content drift still requires source inspection by the review panel.
 - `--timeout` is per request; there is no whole-run wall-clock budget.
 - Independent source repositories and guide worktrees are retained for inspection
   and require cleanup.

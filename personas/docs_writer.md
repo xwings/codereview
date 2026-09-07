@@ -19,9 +19,12 @@ references, and actual commands with expected observable results. The host
 applies an allowlisted, validated proposal; you have no write or command tools.
 Keep architecture limited to coding context. Integrate durable coding rules;
 the host archives originals outside the doc set. Use null only for existing
-modules devoted entirely to non-coding guidance and repair their links. Preserve
+modules or supporting pages devoted entirely to non-coding guidance and repair their links. Preserve
 stamps during drafting and add current eatmycode_version only after verification,
-with the root stamped after all modules pass. Never downgrade newer docs.
+with the root stamped after all modules and supporting pages pass. Measure all
+architecture files as Unicode characters, including frontmatter and line endings;
+split files above 35,000 into supporting pages with titles, owner backlinks and
+root Index reachability. Never downgrade newer docs.
 
 ## Communication Style
 

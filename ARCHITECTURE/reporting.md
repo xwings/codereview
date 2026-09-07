@@ -1,5 +1,5 @@
 ---
-eatmycode_version: "1.1.0"
+eatmycode_version: "1.2.0"
 ---
 # Report validation and rendering
 
@@ -31,35 +31,53 @@ there is no local formatter, linter or type-checker configuration.
 The module reads cited review source and produces strings; it performs no
 GitHub writes and never executes suggested fixes. Citation paths must resolve
 inside the supplied checkout, and lines must be real integer positions
-(`reporting.py:41`). PR approval requires eight merge votes, all seven passing
-checks, justified need, approving rubric verdict, no major/blocker finding,
-and an open non-draft PR (`reporting.py:57`). A hold remains distinguishable
-from rejection. `--allow-approve` controls delivery separately from eligibility.
-Issue answers require cited evidence but do not use the PR approval rubric.
+(`reporting.py:41`). PR approval requires Lead and Verifier both recommend
+merging, all seven checks pass, need is justified, no unresolved question or
+major/blocker remains, and the PR is open/non-draft. Style and naming are
+separate checklist keys. `--allow-approve` controls delivery independently.
+
+Stage schemas have exact fields. Each candidate finding receives one cited
+Verifier disposition: confirmed findings survive, withdrawn ones are omitted,
+and unresolved ones become visible questions. Verifier's new findings also
+survive. Earlier questions are unioned conservatively; they cannot disappear
+through a rewritten final answer. Both recommendations and reasons remain
+visible, even when Verifier withdraws all findings. There is no vote tally.
+
+Issue answers require source evidence, supported classification and concrete
+next steps. `issue_needs_verification` owns the shared routing policy used by
+live selection, authenticated replay, assembly and final rendering. The host sets `verification` to `independent` or
+`single_investigation`; the latter permits only support/missing-information
+answers. Verifier may correct the answer/classification but cannot silently
+erase earlier unanswered questions. Source inspection never claims execution.
 
 ## Key Types and Entry Points
 
 - `reporting.py:22` — `ReportError` stops publication on unusable evidence.
-- `reporting.py:41` — `source_location` resolves review-source citations,
-  rejects escape/symlink escape and non-integer or out-of-range lines.
-- `reporting.py:57` — `validate_pr` requires all checks, eight ballots and valid
-  findings; approval additionally requires unanimity, justified need, passing
-  checks, an approving rubric, zero major/blocker findings and an open non-draft PR.
-- `reporting.py:107` — `fence` handles embedded backtick runs safely.
-- `reporting.py:113` — `render_finding` gives each finding one location, problem
+- `reporting.py:41` — `source_location` rejects citation escape,
+  missing source and non-integer or out-of-range line positions.
+- `reporting.py:127` — `validate_stage` checks role-specific exact
+  schemas, all seven checks, questions and source evidence before the next turn.
+- `reporting.py:170` — `assemble_pr` accounts for every candidate once
+  and returns final fields plus independently attributed assessments.
+- `reporting.py:212` — `assemble_issue` enforces required verification,
+  selects the final answer and preserves questions from investigation.
+- `reporting.py:226` — `validate_pr` checks final shape, assessments,
+  evidence and approval eligibility; missing evidence can only produce a comment.
+- `reporting.py:255` — `fence` handles embedded backtick runs safely.
+- `reporting.py:261` — `render_finding` renders one location, problem
   and fix; blocking source excerpts and optional code sketches are expandable.
-- `reporting.py:132` — `render_pr` leads with Ready to merge, Changes requested,
-  Do not merge or Hold, followed by attributed votes, findings and checks.
-- `reporting.py:168` — `render_issue` requires a supported classification and
-  cited evidence, then renders the answer and actionable next steps.
+- `reporting.py:280` — `render_pr` leads with the verdict, then two
+  assessments, confirmed findings, unresolved questions and seven checks.
+- `reporting.py:316` — `render_issue` validates/renders the answer,
+  source evidence, next steps, questions and verification status.
 
 ## Interactions
 
 [Workflow](review-cli.md) supplies the selected branch or local PR merge
 source, never the rewritten documentation guide. It identifies the branch and
 pinned base/review revisions in the result. PR citations may differ from lines
-on the GitHub PR head. [Harness](harness.md) authenticates ballot
-senders and checks completion before this module sees a result. The renderer
+on the GitHub PR head. [Harness](harness.md) authenticates stage
+senders and rederives final fields/assessments before this module sees a result. The renderer
 cannot promote a hold to approval, and `--allow-approve` controls the final
 [GitHub action](github-io.md), independently from the panel's recommendation.
 
@@ -70,8 +88,9 @@ cannot promote a hold to approval, and `--allow-approve` controls the final
 python3 -m py_compile reporting.py
 ```
 
-Expected: all cases pass, including eight-vote unanimity, need/checklist/state
-gates, malformed citations, issue evidence, table escaping and concise output.
+Expected: all cases pass, including independent agreement, all seven checks,
+need/state gates, candidate confirmations/withdrawals/disputes, preserved questions,
+malformed citations, issue verification/evidence, table escaping and concise output.
 No target commands or external writes occur.
 
 ## Review and Refactor Guide
@@ -80,13 +99,13 @@ Schema changes must be coordinated with [gameplans and runtime](harness.md)
 and [CLI](review-cli.md), then proved through the existing approval, citation,
 report-ordering and issue-answer cases in `tests/test_workflow.py`. Reuse
 `source_location` for all published evidence and escaping helpers for Markdown.
-Keep ballot attribution in the runtime and posting in [GitHub](github-io.md).
+Keep stage attribution in the runtime and posting in [GitHub](github-io.md).
 Any future pagination must preserve a single unambiguous decision and all
 findings; no pagination implementation is currently accepted.
 
 ## Open Gaps / Roadmap
 
 - A valid citation proves that a source line exists, not that the model's
-  interpretation is correct. Independent review and debate address semantics.
+  interpretation is correct. Independent review addresses semantics.
 - Reports use one GitHub comment/review, without inline annotations.
 - Large finding sets can exceed GitHub comment limits; no pagination is added.

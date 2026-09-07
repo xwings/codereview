@@ -1,6 +1,5 @@
 """Documentation preflight, preservation, and filesystem boundary regressions."""
 
-import hashlib
 import os
 import tempfile
 import unittest
@@ -11,7 +10,7 @@ import architecture
 import git_io
 
 ROOT_DOC = """---
-eatmycode_version: 1.1.0
+eatmycode_version: {version}
 ---
 # Example project
 
@@ -52,7 +51,7 @@ M1: document the command and verify its behavior.
 - [Command](ARCHITECTURE/command.md)
 """
 MODULE_DOC = """---
-eatmycode_version: 1.1.0
+eatmycode_version: {version}
 ---
 # Command
 
@@ -102,6 +101,17 @@ Inspect the invocation and return value together when changing the command.
 
 M1: confirm runtime behavior using the command above.
 """
+SUPPORT_DOC = """---
+eatmycode_version: {version}
+---
+# Command details
+
+[Owner](../command.md#design-and-invariants)
+
+## Return value
+
+The entry point at `app.py:4` returns one.
+"""
 
 
 class ArchitectureTests(unittest.TestCase):
@@ -111,14 +121,20 @@ class ArchitectureTests(unittest.TestCase):
         self.clone = Path(self.directory.name).resolve()
         (self.clone / "app.py").write_text("def main():\n    return 1\n\nmain()\n")
         sections = {name: f"## {name}\n\nCurrent {name} requirements.\n" for name in architecture.SHARED_HEADERS}
-        self.skill = architecture.Skill("123456789abcdef", "Fixture specification.", sections, "1.1.0")
-        self.documents = {"ARCHITECTURE.md": ROOT_DOC, "ARCHITECTURE/command.md": MODULE_DOC}
+        # An arbitrary mocked upstream release; document stamps follow the supplied skill.
+        self.skill = architecture.Skill("123456789abcdef", "Fixture specification.", sections, "9.8.7")
+        self.root_doc = ROOT_DOC.format(version=self.skill.version)
+        self.module_doc = MODULE_DOC.format(version=self.skill.version)
+        self.support_doc = SUPPORT_DOC.format(version=self.skill.version)
+        self.documents = {"ARCHITECTURE.md": self.root_doc, "ARCHITECTURE/command.md": self.module_doc}
 
     def generate(self, documents=None):
         return Mock(return_value={"documents": self.documents if documents is None else documents,
                                   "audited": True, "summary": "Source mapped to command ownership."})
 
     def test_missing_docs_are_generated_with_latest_blocks_and_entry_symlinks(self):
+        self.documents["ARCHITECTURE/command.md"] += "\n[Details](details/return.md#return-value)\n"
+        self.documents["ARCHITECTURE/details/return.md"] = self.support_doc
         generate = self.generate()
         report = architecture.prepare(self.clone, self.skill, generate)
         root = (self.clone / "ARCHITECTURE.md").read_text()
@@ -127,7 +143,7 @@ class ArchitectureTests(unittest.TestCase):
             self.assertLess(root.index(f"## {name}"), root.index("## Index"))
         module = (self.clone / "ARCHITECTURE/command.md").read_text()
         for content in (root, module):
-            self.assertTrue(content.startswith("---\neatmycode_version: 1.1.0\n---\n"))
+            self.assertTrue(content.startswith(f"---\neatmycode_version: {self.skill.version}\n---\n"))
         self.assertEqual([line for line in root.splitlines() if line.startswith("## ")], [
             "## Mission and Constraints", "## Languages and Toolchain", "## System Design",
             "## Runtime and Data Flow", "## Workspace Map", "## Coding Style and Code Design",
@@ -143,88 +159,101 @@ class ArchitectureTests(unittest.TestCase):
         for name in architecture.AGENT_FILES:
             self.assertEqual(os.readlink(self.clone / name), "ARCHITECTURE.md")
         self.assertIn("ARCHITECTURE/command.md", report.changed_paths)
+        self.assertIn("ARCHITECTURE/details/return.md", report.changed_paths)
+        self.assertEqual((self.clone / "ARCHITECTURE/details/return.md").read_text(), self.support_doc)
         self.assertIn(str(self.clone), generate.call_args.args[0])
         self.assertIn("NOT executed", report.context())
 
-    def test_current_root_skips_preparation_and_stale_root_requires_repair(self):
+        updated = architecture.Skill("new-revision", self.skill.text, self.skill.shared_sections, "9.10.0")
+        documents = {
+            "ARCHITECTURE.md": ROOT_DOC.format(version=updated.version),
+            "ARCHITECTURE/command.md": MODULE_DOC.format(version=updated.version)
+                                      + "\n[Details](details/return.md#return-value)\n",
+            "ARCHITECTURE/details/return.md": SUPPORT_DOC.format(version=updated.version),
+        }
+        generate = self.generate(documents)
+        refreshed = architecture.prepare(self.clone, updated, generate)
+        generate.assert_called_once()
+        for name, content in refreshed.documents.items():
+            self.assertTrue(content.startswith(f"---\neatmycode_version: {updated.version}\n---\n"))
+            self.assertEqual((self.clone / name).read_text(), content)
+
+    def test_current_set_skips_preparation_and_stale_documents_require_repair(self):
         architecture.prepare(self.clone, self.skill, self.generate())
         root = (self.clone / "ARCHITECTURE.md").read_text()
+        nested = "ARCHITECTURE/details/return.md"
+        (self.clone / nested).parent.mkdir()
+        self.documents["ARCHITECTURE/command.md"] += "\n[Details](details/return.md)\n"
+        self.documents[nested] = self.support_doc
         sections = dict(self.skill.shared_sections)
         sections["Review Checks"] += "New upstream requirement.\n"
-        current = architecture.Skill("new-revision", self.skill.text, sections, "1.1.0")
-        cases = (
-            ("shared-rules", "ARCHITECTURE.md", root),
-            ("root-header", "ARCHITECTURE.md", root.replace("## Mission and Constraints", "## Purpose")),
-            ("root-index", "ARCHITECTURE.md", root.replace("- [Command](ARCHITECTURE/command.md)", "")),
-            ("root-link", "ARCHITECTURE.md", root + "\n[Missing](missing.md)\n"),
-            ("root-reference", "ARCHITECTURE.md", root + "\n`app.py:999`\n"),
-            ("module-missing", "ARCHITECTURE/command.md", None),
-            ("module-old", "ARCHITECTURE/command.md", MODULE_DOC.replace("1.1.0", "1.0.0")),
-            ("module-newer", "ARCHITECTURE/command.md", MODULE_DOC.replace("1.1.0", "1.2.0")),
-            ("module-malformed", "ARCHITECTURE/command.md", "Unstructured module.\n"),
-            ("regular-guidance", "AGENTS.md", "Preserve this guidance.\n"),
-            ("missing-entry-link", "AGENTS.md", None),
-        )
-        for cause, name, content in cases:
-            (self.clone / "ARCHITECTURE.md").write_text(root)
-            (self.clone / "ARCHITECTURE/command.md").write_text(MODULE_DOC)
+        current = architecture.Skill("new-revision", self.skill.text, sections, self.skill.version)
+        cases = [
+            ("shared-rules", "ARCHITECTURE.md", root, False),
+            ("root-header", "ARCHITECTURE.md", root.replace("## Mission and Constraints", "## Purpose"), False),
+            ("root-index", "ARCHITECTURE.md", root.replace("- [Command](ARCHITECTURE/command.md)", ""), False),
+            ("root-link", "ARCHITECTURE.md", root + "\n[Missing](missing.md)\n", False),
+            ("root-reference", "ARCHITECTURE.md", root + "\n`app.py:999`\n", False),
+            ("regular-guidance", "AGENTS.md", "Preserve this guidance.\n", False),
+            ("missing-entry-link", "AGENTS.md", None, False),
+        ]
+        for name, original in self.documents.items():
+            for version in ("missing", None, "invalid", "1.0.0", f"{self.skill.version}-rc.1"):
+                content = (None if version == "missing" else
+                           original.replace(f"---\neatmycode_version: {self.skill.version}\n---\n", "", 1) if version is None else
+                           original.replace(self.skill.version, version, 1))
+                # A missing supporting page cannot be inferred from a version-only inventory.
+                if name == nested and version == "missing":
+                    continue
+                cases.append((f"{name}-{version}", name, content, True))
+            for size in (35_000, 35_001):
+                content = original.replace("\n", "\r\n")
+                content += "界" * (size - len(content))
+                cases.append((f"{name}-{size}", name, content, size > 35_000))
+        for cause, name, content, audit in cases:
+            for path, original in self.documents.items():
+                (self.clone / path).write_bytes((root if path == "ARCHITECTURE.md" else original).encode())
             entry = self.clone / "AGENTS.md"
             entry.unlink(missing_ok=True)
             entry.symlink_to("ARCHITECTURE.md")
             path = self.clone / name
             path.unlink(missing_ok=True)
             if content is not None:
-                path.write_text(content)
+                path.write_bytes(content.encode())
+            if name == "ARCHITECTURE/command.md" and content is None:
+                (self.clone / nested).unlink()
             before = {p.relative_to(self.clone): (p.read_bytes(), p.stat().st_mtime_ns)
                       for p in self.clone.rglob("*") if p.is_file() and not p.is_symlink()}
             links = {p.name: os.readlink(p) for p in self.clone.iterdir() if p.is_symlink()}
             generate = self.generate()
-            with self.subTest(cause=cause), \
-                    patch.object(architecture, "_existing_documents", side_effect=AssertionError("module inventory")), \
-                    patch.object(architecture, "_agent_guidance", side_effect=AssertionError("guidance check")), \
-                    patch.object(architecture, "validate_documents", side_effect=AssertionError("structure check")):
+            with self.subTest(cause=cause):
                 report = architecture.prepare(self.clone, current, generate)
-                generate.assert_not_called()
-                self.assertFalse(report.audited)
-                self.assertEqual(report.changed_paths, ())
-                self.assertEqual(report.documents, {"ARCHITECTURE.md": (self.clone / "ARCHITECTURE.md").read_text()})
-                self.assertIn("Only the root ARCHITECTURE.md version was checked", report.context())
-                self.assertIn("preparation and source audit were skipped", report.context())
-                self.assertNotIn("structurally checked", report.context())
-                self.assertIn("ARCHITECTURE/ when present", report.context())
+                self.assertEqual(generate.call_count, int(audit))
+                self.assertEqual(report.audited, audit)
+                if audit:
+                    self.assertIn("New upstream requirement", report.documents["ARCHITECTURE.md"])
+                    self.assertEqual(report.documents[nested], self.support_doc)
+                else:
+                    self.assertEqual(report.changed_paths, ())
+                    self.assertEqual(set(report.documents), set(self.documents))
+                    self.assertIn("Architecture versions and sizes were checked", report.context())
+                    self.assertIn("preparation and source audit were skipped", report.context())
+                    self.assertNotIn("structurally checked", report.context())
+                    self.assertEqual(before, {
+                        p.relative_to(self.clone): (p.read_bytes(), p.stat().st_mtime_ns)
+                        for p in self.clone.rglob("*") if p.is_file() and not p.is_symlink()
+                    })
+                    self.assertEqual(links, {p.name: os.readlink(p) for p in self.clone.iterdir() if p.is_symlink()})
                 self.assertIn("complete related source", report.context())
                 self.assertIn("NOT executed", report.context())
-                self.assertEqual(before, {
-                    p.relative_to(self.clone): (p.read_bytes(), p.stat().st_mtime_ns)
-                    for p in self.clone.rglob("*") if p.is_file() and not p.is_symlink()
-                })
-                self.assertEqual(links, {p.name: os.readlink(p) for p in self.clone.iterdir() if p.is_symlink()})
-                self.assertFalse((self.clone / architecture.ARCHIVE_PATH).exists())
-        for version in ("missing", None, "invalid", "1.0.0"):
-            path = self.clone / "ARCHITECTURE.md"
-            if version == "missing":
-                path.unlink()
-            else:
-                path.write_text(ROOT_DOC.replace("---\neatmycode_version: 1.1.0\n---\n", "", 1)
-                                if version is None else ROOT_DOC.replace("1.1.0", version, 1))
-            (self.clone / "ARCHITECTURE/command.md").write_text(MODULE_DOC.replace("1.1.0", "1.0.0", 1))
-            before = {p.relative_to(self.clone): p.read_bytes() for p in self.clone.rglob("*")
-                      if p.is_file() and not p.is_symlink()}
-            with self.subTest(version=version):
-                with self.assertRaises(architecture.ArchitectureError):
-                    architecture.prepare(self.clone, current, self.generate({"ARCHITECTURE.md": ROOT_DOC}))
-                self.assertEqual(before, {
-                    p.relative_to(self.clone): p.read_bytes() for p in self.clone.rglob("*")
-                    if p.is_file() and not p.is_symlink()
-                })
-                generate = self.generate()
-                repaired = architecture.prepare(self.clone, current, generate)
-                generate.assert_called_once()
-                self.assertTrue(repaired.audited)
-                self.assertIn("ARCHITECTURE.md", repaired.changed_paths)
-                self.assertIn("ARCHITECTURE/command.md", repaired.changed_paths)
-                self.assertIn("New upstream requirement", repaired.documents["ARCHITECTURE.md"])
-                self.assertEqual(repaired.documents["ARCHITECTURE/command.md"], MODULE_DOC)
+        # A partial repair cannot certify a retained stale page or change any files.
+        (self.clone / nested).write_text(self.support_doc.replace(self.skill.version, "1.0.0"))
+        before = {p.relative_to(self.clone): p.read_bytes() for p in self.clone.rglob("*")
+                  if p.is_file() and not p.is_symlink()}
+        with self.assertRaises(architecture.ArchitectureError):
+            architecture.prepare(self.clone, current, self.generate({"ARCHITECTURE.md": self.root_doc}))
+        self.assertEqual(before, {p.relative_to(self.clone): p.read_bytes() for p in self.clone.rglob("*")
+                                  if p.is_file() and not p.is_symlink()})
 
     def test_agent_guidance_survives_migration_and_later_root_rewrites(self):
         guidance = ("Use the stable API.\nDeployment: contact the operator before rollout.\n"
@@ -244,12 +273,12 @@ class ArchitectureTests(unittest.TestCase):
         self.assertNotIn("Deployment:", (self.clone / "ARCHITECTURE.md").read_text())
         self.assertEqual(os.readlink(self.clone / "AGENTS.md"), "ARCHITECTURE.md")
         root_path = self.clone / "ARCHITECTURE.md"
-        root_path.write_text(root_path.read_text().replace("1.1.0", "1.0.0", 1))
+        root_path.write_text(root_path.read_text().replace(self.skill.version, "1.0.0", 1))
         previous_root = root_path.read_bytes()
         previous_module = (self.clone / "ARCHITECTURE/command.md").read_bytes()
         revised = {
-            "ARCHITECTURE.md": ROOT_DOC.replace("example command", "documented command"),
-            "ARCHITECTURE/command.md": MODULE_DOC.replace("returns one", "returns the integer one"),
+            "ARCHITECTURE.md": self.root_doc.replace("example command", "documented command"),
+            "ARCHITECTURE/command.md": self.module_doc.replace("returns one", "returns the integer one"),
         }
         later_guidance = "Keep the documented command stable.\n"
         (self.clone / "AGENTS.md").unlink()
@@ -270,27 +299,33 @@ class ArchitectureTests(unittest.TestCase):
     def test_invalid_proposals_never_write_any_files(self):
         invalid = {
             "output-path": {"../../escaped.md": "bad"},
-            "root-header": {"ARCHITECTURE.md": ROOT_DOC.replace("## Mission and Constraints", "## Purpose")},
-            "root-order": {"ARCHITECTURE.md": ROOT_DOC.replace("## Languages and Toolchain", "## TEMP")
+            "root-header": {"ARCHITECTURE.md": self.root_doc.replace("## Mission and Constraints", "## Purpose")},
+            "root-order": {"ARCHITECTURE.md": self.root_doc.replace("## Languages and Toolchain", "## TEMP")
                            .replace("## System Design", "## Languages and Toolchain")
                            .replace("## TEMP", "## System Design")},
-            "header": {"ARCHITECTURE/command.md": MODULE_DOC.replace("## Status", "## State")},
-            "module-order": {"ARCHITECTURE/command.md": MODULE_DOC.replace("## Goal", "## TEMP")
+            "header": {"ARCHITECTURE/command.md": self.module_doc.replace("## Status", "## State")},
+            "module-order": {"ARCHITECTURE/command.md": self.module_doc.replace("## Goal", "## TEMP")
                              .replace("## Status", "## Goal").replace("## TEMP", "## Status")},
-            "reference": {"ARCHITECTURE/command.md": MODULE_DOC.replace("app.py:4", "app.py:999")},
-            "zero-references": {"ARCHITECTURE/command.md": MODULE_DOC.replace("app.py:4", "app.py")},
-            "index": {"ARCHITECTURE.md": ROOT_DOC.replace("ARCHITECTURE/command.md", "ARCHITECTURE/missing.md")},
-            "link": {"ARCHITECTURE.md": ROOT_DOC + "\n[escape](../../outside)\n"},
+            "reference": {"ARCHITECTURE/command.md": self.module_doc.replace("app.py:4", "app.py:999")},
+            "zero-references": {"ARCHITECTURE/command.md": self.module_doc.replace("app.py:4", "app.py")},
+            "index": {"ARCHITECTURE.md": self.root_doc.replace("ARCHITECTURE/command.md", "ARCHITECTURE/missing.md")},
+            "link": {"ARCHITECTURE.md": self.root_doc + "\n[escape](../../outside)\n"},
             "null-root": {"ARCHITECTURE.md": None},
             "null-new": {"ARCHITECTURE/missing.md": None},
             "null-path": {"../../escaped.md": None},
             "direct-archive": {"ARCHITECTURE-ARCHIVE.md": "Replace preserved originals."},
+            "nested-traversal": {"ARCHITECTURE/details/../../escape.md": "bad"},
+            "anchor": {"ARCHITECTURE/command.md": self.module_doc + "\n[Missing](command.md#absent)\n"},
+            "unreachable-support": {"ARCHITECTURE/details/return.md": self.support_doc},
+            "support-owner": {"ARCHITECTURE/command.md": self.module_doc + "\n[Details](details/return.md)\n",
+                              "ARCHITECTURE/details/return.md": self.support_doc.replace("[Owner](../command.md#design-and-invariants)", "")},
         }
         for name, content in self.documents.items():
-            for version in (None, "1.0.0", "1.1.0-rc.1", "1.1.0\neatmycode_version: 1.1.0"):
+            invalid[f"{name}-size"] = {name: content + "界" * (35_001 - len(content))}
+            for version in (None, "1.0.0", f"{self.skill.version}-rc.1", f"{self.skill.version}\neatmycode_version: {self.skill.version}"):
                 invalid[f"{name}-stamp-{version}"] = {
-                    name: content.replace("---\neatmycode_version: 1.1.0\n---\n", "", 1)
-                    if version is None else content.replace("eatmycode_version: 1.1.0",
+                    name: content.replace(f"---\neatmycode_version: {self.skill.version}\n---\n", "", 1)
+                    if version is None else content.replace(f"eatmycode_version: {self.skill.version}",
                                                            f"eatmycode_version: {version}", 1)
                 }
         for cause, replacements in invalid.items():
@@ -309,9 +344,9 @@ class ArchitectureTests(unittest.TestCase):
         retired = "# Deployment\n\nRetired operational guidance.\n"
         (self.clone / retired_name).write_text(retired)
         root_path = self.clone / "ARCHITECTURE.md"
-        previous_root = root_path.read_text().replace("1.1.0", "1.0.0", 1) + f"\n- [Deployment]({retired_name})\n"
+        previous_root = root_path.read_text().replace(self.skill.version, "1.0.0", 1) + f"\n- [Deployment]({retired_name})\n"
         root_path.write_text(previous_root)
-        proposed = {"ARCHITECTURE.md": ROOT_DOC, retired_name: None}
+        proposed = {"ARCHITECTURE.md": self.root_doc, retired_name: None}
         before = {p.relative_to(self.clone): p.read_bytes() for p in self.clone.rglob("*")
                   if p.is_file() and not p.is_symlink()}
         for cause in ("audit", "root-link", "module-link"):
@@ -319,7 +354,7 @@ class ArchitectureTests(unittest.TestCase):
             if cause == "root-link":
                 documents["ARCHITECTURE.md"] += f"\n- [Deployment]({retired_name})\n"
             elif cause == "module-link":
-                documents["ARCHITECTURE/command.md"] = MODULE_DOC + "\n[Old guide](deployment.md)\n"
+                documents["ARCHITECTURE/command.md"] = self.module_doc + "\n[Old guide](deployment.md)\n"
             generate = self.generate(documents)
             if cause == "audit":
                 generate.return_value["audited"] = False
@@ -343,6 +378,9 @@ class ArchitectureTests(unittest.TestCase):
 
     def test_newer_versions_stop_before_generation_without_downgrading_any_document(self):
         architecture.prepare(self.clone, self.skill, self.generate())
+        nested = "ARCHITECTURE/details/return.md"
+        (self.clone / nested).parent.mkdir()
+        self.documents[nested] = self.support_doc
         for name in self.documents:
             other = next(path for path in self.documents if path != name)
             for mixed_stale in (False, True):
@@ -351,7 +389,8 @@ class ArchitectureTests(unittest.TestCase):
                                        ("1.1.0", '"1.2.0" # verified migration')):
                     for path, content in self.documents.items():
                         version = future if path == name else ("1.0.0" if mixed_stale else active)
-                        (self.clone / path).write_text(content.replace("1.1.0", version, 1))
+                        (self.clone / path).write_text(content.replace(self.skill.version, version, 1)
+                                                      + ("x" * 35_001 if mixed_stale and path == other else ""))
                     before = {p.relative_to(self.clone): p.read_bytes() for p in self.clone.rglob("*")
                               if p.is_file() and not p.is_symlink()}
                     skill = architecture.Skill(self.skill.revision, self.skill.text,
@@ -359,12 +398,8 @@ class ArchitectureTests(unittest.TestCase):
                     generate = self.generate()
                     with self.subTest(name=name, stale=other if mixed_stale else None,
                                       active=active, future=future):
-                        if name == "ARCHITECTURE.md" or mixed_stale:
-                            with self.assertRaises(architecture.ArchitectureError):
-                                architecture.prepare(self.clone, skill, generate)
-                        else:
-                            report = architecture.prepare(self.clone, skill, generate)
-                            self.assertFalse(report.audited)
+                        with self.assertRaises(architecture.ArchitectureError):
+                            architecture.prepare(self.clone, skill, generate)
                         generate.assert_not_called()
                         self.assertEqual(before, {
                             p.relative_to(self.clone): p.read_bytes() for p in self.clone.rglob("*")
@@ -372,12 +407,32 @@ class ArchitectureTests(unittest.TestCase):
                         })
 
     def test_source_and_output_symlink_escapes_are_rejected(self):
+        directory = self.clone / "ARCHITECTURE"
+        directory.mkdir()
+        (directory / "details").symlink_to(self.clone.parent)
+        (self.clone / "ARCHITECTURE.md").write_text(self.root_doc)
+        generate = self.generate()
+        with self.assertRaises(architecture.ArchitectureError):
+            architecture.prepare(self.clone, self.skill, generate)
+        generate.assert_not_called()
+        with self.assertRaises(architecture.ArchitectureError):
+            architecture.validate_documents(self.clone, self.documents | {
+                "ARCHITECTURE/details/deep/return.md": self.support_doc}, self.skill)
+        (directory / "details").unlink()
+        (directory / "details").mkdir()
+        (directory / "details/return.md").symlink_to(self.clone / "app.py")
+        with self.assertRaises(architecture.ArchitectureError):
+            architecture.prepare(self.clone, self.skill, generate)
+        (directory / "details/return.md").unlink()
+        (directory / "details").rmdir()
+        directory.rmdir()
+        (self.clone / "ARCHITECTURE.md").unlink()
         (self.clone / "ARCHITECTURE").symlink_to(self.clone.parent)
         with self.assertRaises(architecture.ArchitectureError):
             architecture.prepare(self.clone, self.skill, self.generate())
         (self.clone / "ARCHITECTURE").unlink()
         (self.clone / "escape.py").symlink_to("/etc/passwd")
-        docs = self.documents | {"ARCHITECTURE/command.md": MODULE_DOC.replace("app.py", "escape.py")}
+        docs = self.documents | {"ARCHITECTURE/command.md": self.module_doc.replace("app.py", "escape.py")}
         with self.assertRaises(architecture.ArchitectureError):
             architecture.prepare(self.clone, self.skill, self.generate(docs))
         original_source = (self.clone / "app.py").read_bytes()
@@ -393,13 +448,15 @@ class ArchitectureTests(unittest.TestCase):
         retired = self.clone / "ARCHITECTURE/retired.md"
         retired.symlink_to(self.clone / "app.py")
         root_path = self.clone / "ARCHITECTURE.md"
-        root_path.write_text(root_path.read_text().replace("1.1.0", "1.0.0", 1))
+        root_path.write_text(root_path.read_text().replace(self.skill.version, "1.0.0", 1))
         with self.assertRaises(architecture.ArchitectureError):
             architecture.prepare(self.clone, self.skill, self.generate({"ARCHITECTURE/retired.md": None}))
         self.assertTrue(retired.is_symlink())
         self.assertEqual((self.clone / "app.py").read_bytes(), original_source)
 
     def test_apply_rolls_back_every_artifact_on_io_failure(self):
+        self.documents["ARCHITECTURE/command.md"] += "\n[Details](details/deep/return.md)\n"
+        self.documents["ARCHITECTURE/details/deep/return.md"] = self.support_doc.replace("../command.md", "../../command.md")
         (self.clone / "AGENT.md").write_text("Keep this rule.\n")
         original_replace = os.replace
         failed = False
@@ -424,7 +481,7 @@ class ArchitectureTests(unittest.TestCase):
         (self.clone / "CLAUDE.md").unlink()
         (self.clone / "CLAUDE.md").write_text("Keep this later guidance.\n")
         root_path = self.clone / "ARCHITECTURE.md"
-        root_path.write_text(root_path.read_text().replace("1.1.0", "1.0.0", 1))
+        root_path.write_text(root_path.read_text().replace(self.skill.version, "1.0.0", 1))
         before = {p.relative_to(self.clone): p.read_bytes() for p in self.clone.rglob("*")
                   if p.is_file() and not p.is_symlink()}
         previous_links = {name: os.readlink(self.clone / name) for name in architecture.AGENT_FILES
@@ -441,7 +498,8 @@ class ArchitectureTests(unittest.TestCase):
                 raise OSError("simulated error after archive append and deletion")
             return original_replace(source, target)
 
-        documents = {"ARCHITECTURE.md": ROOT_DOC.replace("example command", "updated command"),
+        documents = {"ARCHITECTURE.md": self.root_doc.replace("example command", "updated command"),
+                     "ARCHITECTURE/details/deep/return.md": self.documents["ARCHITECTURE/details/deep/return.md"].replace("returns one", "returns the integer one"),
                      retired_name: None}
         with patch.object(architecture.os, "replace", side_effect=replace_after_deletion):
             with self.assertRaises(OSError):
@@ -457,17 +515,14 @@ class ArchitectureTests(unittest.TestCase):
         })
         self.assertFalse(list(self.clone.glob(".architecture-stage-*")))
 
-    def test_sync_fetches_head_every_time_and_refuses_stale_or_unknown_rules(self):
+    def test_sync_fetches_head_every_time_and_adopts_latest_valid_rules(self):
         cache = self.clone / "eatmycode"
         upstream = self.clone / "upstream"
         upstream.mkdir()
         git_io.git("init", cwd=upstream, isolated=True)
-        header = "---\nmetadata:\n  version: 9.8.7\n---\n\n"
+        header = f"---\nmetadata:\n  version: {self.skill.version}\n---\n\n"
         footer = "## Output Contract\n\nSynthetic test contract.\n"
         source = header + "".join(self.skill.shared_sections.values()) + footer
-        normalized = header + "".join(
-            f"## {name}\n[shared section]\n" for name in self.skill.shared_sections
-        ) + footer
 
         def commit(content):
             (upstream / "SKILL.md").write_text(content)
@@ -478,11 +533,10 @@ class ArchitectureTests(unittest.TestCase):
 
         revision = commit(source)
         with patch.object(architecture, "UPSTREAM", upstream.as_uri()), \
-                patch.object(architecture, "SUPPORTED_CONTRACT", hashlib.sha256(normalized.encode()).hexdigest()), \
                 patch.object(git_io, "git", wraps=git_io.git) as calls:
             skill = architecture.sync_skill(cache)
             self.assertEqual(skill.revision, revision)
-            self.assertEqual(skill.version, "9.8.7")
+            self.assertEqual(skill.version, self.skill.version)
             self.assertEqual(skill.text, source)
             self.assertEqual(skill.shared_sections, self.skill.shared_sections)
             changed_shared = source.replace("## Review Checks\n", "## Review Checks\n\nA new shared rule.\n", 1)
@@ -511,9 +565,16 @@ class ArchitectureTests(unittest.TestCase):
             finally:
                 unavailable.rename(upstream)
 
-            commit(changed_shared.replace("Synthetic test contract.", "Unsupported contract."))
-            with self.assertRaisesRegex(architecture.ArchitectureError, "changed its supported contract"):
-                architecture.sync_skill(cache)
+            changed_contract = changed_shared.replace("Synthetic test contract.", "Updated contract.").replace(self.skill.version, "9.10.0")
+            latest_revision = commit(changed_contract)
+            latest = architecture.sync_skill(cache)
+            self.assertEqual((latest.version, latest.revision, latest.text), ("9.10.0", latest_revision, changed_contract))
+            for invalid in (changed_contract.replace("9.10.0", "invalid"),
+                            changed_contract.replace("metadata:", "unrelated:"),
+                            changed_contract.replace("## Coding Discipline", "## Absent")):
+                commit(invalid)
+                with self.assertRaises(architecture.ArchitectureError):
+                    architecture.sync_skill(cache)
 
 
 if __name__ == "__main__":

@@ -6,8 +6,9 @@ maintenance, advisories, license obligations and transitive exposure. Establish
 the dependency boundaries in ARCHITECTURE.md and related module docs, then
 confirm the manifests and actual import paths in source.
 
-You own check 6 and nothing else: does this pull request add a package, and if
-so, should it?
+You answer the lead reviewer's focused dependency question. Check whether the
+change adds or updates a package, whether its provenance and security are known,
+and whether the benefit justifies its maintenance cost.
 
 Four questions, in order. Is a new dependency actually being added — check the
 manifests, and check the imports, because a patch can import something the
@@ -43,3 +44,8 @@ are arguing the dependency is unnecessary, sketch what replacing it would take
 and be honest about the size. An unjustified new top-level dependency is major
 per the rubric; a package with a live advisory or an abandoned upstream is a
 blocker.
+
+Return the consultant RESULT record specified in the gameplan: findings,
+questions and a summary answering the focused request. This is your only turn;
+the independent verifier checks any findings you raise. Do not route agents,
+cast a merge ballot or execute target code.

@@ -1,23 +1,24 @@
 ---
-eatmycode_version: "1.1.0"
+eatmycode_version: "1.2.0"
 ---
 # codereview
 
 ## Mission and Constraints
 
 Review GitHub pull requests and answer issues using the target project's
-architecture and source. A specialist panel investigates, challenges its own
-conclusions, and produces one evidence-backed report for a maintainer. PR
-reviewers each cast a merge recommendation. PRs merge only into isolated local
-review sources; the tool never merges a PR on GitHub.
+architecture and source. A lead reviewer investigates and an independent
+verifier checks every PR; issue verification runs for uncertain or substantial
+conclusions. The host produces one evidence-backed report for a maintainer.
+PRs merge only into isolated local review sources; the tool never merges a PR on GitHub.
 
 Every repository is treated equally: `--repo` and `--branch` are required,
 the selected source snapshot is authoritative, and optional profiles only
 supplement it. No project-specific profile ships (`review.py:76`, `review.py:153`).
 Linux and macOS with Python 3.10+ and Git 2.32+ are declared supported in
 `README.md:10`. Target tests, builds and scripts are never executed; this tool's
-own development tests are separate. Offline or unsupported eatmycode
-specification changes stop preflight.
+own development tests are separate. Preflight fetches the latest eatmycode
+specification on every run; unavailable or malformed upstream rules stop the
+run. Release numbers and a remembered contract fingerprint do not select the rules.
 
 ## Languages and Toolchain
 
@@ -44,8 +45,10 @@ The CLI calls architecture preparation, checkout/GitHub boundaries, panel
 construction/runtime, and report validation;
 those modules own their contracts and do not import the CLI. `repo_facts.py`
 and `agent_tools.py` collect inspection evidence through the I/O boundaries.
-Gameplans and personas define panel behavior; host code verifies actual
-participation, result shape and independent ballots (`panel_runtime.py:141`).
+Gameplans and personas define review contracts and expertise. Host code selects
+Lead, any requested Security/Dependencies consultants, then Verifier. All seven
+checks remain separate. It validates authenticated turns, result shape and
+independent assessments (`panel_runtime.py:151`).
 The [Index](#index) routes subsystem changes and their interaction partners.
 
 Cross-cutting invariants:
@@ -58,16 +61,16 @@ Cross-cutting invariants:
 - Never execute target tests, builds or scripts. Panel gameplans expose no
   command, shell, write or memory-write tool.
 - Panel reads stay inside its source checkout, explicitly allowed generated
-  guide files and an optional caller-selected transcript (`session_builder.py:38`).
+  guide files and an optional caller-selected transcript (`session_builder.py:36`).
 - Generated documentation is validated before writes to retained local guide
   worktrees, with rollback on write failure. It is never pushed or committed.
 - Preserve managed working trees, local branch refs and durable agent guidance.
   Reject dirty clones; do not reset work or replace a different repository's clone
   (`git_io.py:62`, `git_io.py:83`).
 - Keep credentials in memory; disable kerness session persistence and exclude
-  credentials from topics, reports and transcripts (`session_builder.py:29`).
+  credentials from topics, reports and transcripts (`session_builder.py:27`).
 - Missing reviewers, malformed results, rejected documentation audits and invalid
-  citations stop publication (`panel_runtime.py:141`, `reporting.py:41`).
+  citations stop publication (`panel_runtime.py:151`, `reporting.py:41`).
 
 ## Runtime and Data Flow
 
@@ -80,13 +83,17 @@ Cross-cutting invariants:
 3. Git prepares an isolated snapshot of the required `--branch`. Issues use
    that branch exactly; PRs merge the pinned PR head into it locally. Conflicts
    and changed fetched heads stop before documentation or model calls. The CLI
-   refreshes eatmycode and checks the final source's root version once. A current
-   `ARCHITECTURE.md` skips documentation preparation; missing or outdated roots
-   receive a separate retained guide worktree (`git_io.py:109`, `review.py:310`).
-4. The panel studies architecture and complete relevant source, debates findings
-   and verifies conclusions. The host checks participation, strict result fields,
-   citations and ballots, then renders one report naming the selected branch,
-   pinned base and reviewed revision. PR citations refer to the local merge
+   refreshes eatmycode and checks `ARCHITECTURE.md` plus every Markdown file
+   recursively under `ARCHITECTURE/`, including supporting pages. Matching
+   versions and sizes at most 35,000 Unicode characters skip documentation
+   preparation. Missing, invalid, older or oversized docs receive a local update
+   in a separate retained guide worktree; newer docs are preserved without
+   downgrading (`git_io.py:109`, `review.py:310`).
+4. Lead reviews architecture and complete relevant source, optional consultants
+   investigate focused questions, and Verifier accounts for every finding. Issues
+   use one investigation and conditional verification. The host validates
+   participation, result fields, citations and assessments, then renders one report
+   naming the selected branch, pinned base and reviewed revision. PR citations refer to the local merge
    result and may differ from GitHub PR-head lines.
 5. `review.py:340` prints Markdown to stdout and posts through `gh` unless
    `--dry-run`. PR metadata is checked again before publication. Progress and
@@ -97,7 +104,8 @@ provider. `--timeout` limits each model request; calls are synchronous, with no
 whole-run deadline. Each active progress scope has a temporary thread that
 prints a heartbeat every 15 seconds and is stopped and joined on scope exit,
 including errors and interruption (`progress.py:15`). Panel status identifies
-model waits, evidence inspection, phases and completed specialist turns.
+model waits, evidence inspection and completed review steps; documentation
+preparation retains phase and specialist-turn progress.
 Optional transcripts are explicit files; session state is not persisted.
 Managed clones, isolated source repositories, guide worktrees and the upstream
 rule cache are retained across process exit. There is no service, database or
@@ -125,8 +133,8 @@ shutdown worker. See [workflow](ARCHITECTURE/review-cli.md) and
 Observed Python conventions are four-space indentation, `snake_case` functions,
 `UPPER_CASE` constants, standard-library imports before local imports, postponed
 annotations and typed boundaries. Reuse `Path`, dataclasses for fixed internal
-records, and dictionaries for model/CLI payloads (`panel_runtime.py:102`,
-`session_builder.py:38`, `reporting.py:57`). Annotations are not uniform or
+records, and dictionaries for model/CLI payloads (`panel_runtime.py:93`,
+`session_builder.py:36`, `reporting.py:226`). Annotations are not uniform or
 statically enforced; preserve the surrounding style rather than imposing a new
 checker. No formatter/linter/type-check command is configured.
 
@@ -135,7 +143,7 @@ raise domain errors; CLI coordination turns them into concise nonzero exits.
 Tool handlers return explicit unavailable-evidence text so the panel can record
 a gap (`agent_tools.py:101`). Runtime progress is flushed to stderr; stdout
 belongs to the final report. Tests use `unittest`, temporary directories, mocks and scripted
-kerness providers (`tests/test_workflow.py:38`). Add no top-level dependency
+kerness providers (`tests/test_workflow.py:47`). Add no top-level dependency
 without evidence that standard-library implementation is unreasonable.
 
 ## Verification and Review Map
@@ -171,8 +179,8 @@ upstream checks in [harness](ARCHITECTURE/harness.md).
 | ------------ | -------------------------------- |
 | Architecture preflight | `tests/test_architecture.py`: temporary upstream refresh/update/failure, version gates, current-doc reuse, full proposal validation, preservation and rollback; owning doc also gives the live upstream compatibility check |
 | CLI, Git/GitHub and profiles | `tests/test_workflow.py`, `tests/test_git_io.py`: required branch/routing, isolated local merges, source citations, body-file writes and no-write guards |
-| Panels and reporting | `tests/test_workflow.py`: real scripted session rounds, independent ballots/audits, strict completion, approval and rendering |
-| Documentation | Validate current source references, relative links, exact shared/root/module sections and matching verified version stamps |
+| Panels and reporting | `tests/test_workflow.py`: real scripted review sequences, independent assessments/audits, strict completion, approval and rendering |
+| Documentation | Validate source references, links/anchors, exact shared/root/module sections, supporting-page ownership, matching verified stamps and each file's 35,000-character limit |
 
 Offline tests use no external model calls or GitHub writes and never execute
 untrusted target code. Live model interpretation and GitHub posting remain
@@ -186,7 +194,7 @@ source and supplied evidence.
   preparation after PR/issue detection, selected-branch source and local PR
   merges, with generated guides kept separate.
   The architecture owner maintains versioned contracts and migration checks.
-- **M2 — Accountable review:** implemented specialist debate, attributed votes,
+- **M2 — Accountable review:** implemented bounded review and independent verification, attributed assessments,
   strict completion/approval gates and readable reports.
 - **M3 — Public project quality:** implemented reproducible dependency setup,
   direct launcher and offline integration tests; architecture is audited against
@@ -200,250 +208,193 @@ verification before it becomes accepted work.
 
 ## Development Loop
 
-Coding Discipline governs writing; Review Checks govern review. This
-loop connects them and defines when work is ready to release.
+Frame → Write → Prove → Review → Gate. Findings return to Write;
+uncertainty that changes the plan returns to Frame.
 
-```text
-Frame → Write → Prove → Review → Gate
-          ▲          findings      │
-          └────────────────────────┘
-```
+Use one subagent per role when available, otherwise distinct labeled
+passes. Tester and Verifier report findings and never edit; Coder repairs.
+
+| Role | Stages | Handoff |
+| ---- | ------ | ------- |
+| Planner | Frame | Goal, observable checks, assumptions, affected files/owners, and plan. |
+| Coder | Write | Planned changes or repairs to named findings. |
+| Tester | Prove | Commands, results, and behavioral/structural evidence. |
+| Verifier | Review + Gate | Evidence-backed findings or verified completion. |
 
 ### The loop
 
-**1. Frame.** Convert the request into a goal with an observable check.
-Inspect the request, code, docs, and repository conventions; record the
-narrowest supported assumptions. When using eatmycode, run its Version
-and Freshness Gate before trusting architecture guidance. Ask one focused
-question only when a required decision cannot be discovered or safely
-inferred and guessing would materially change the result. Once framed,
-continue without an approval pause.
+1. **Frame:** Inspect the request, code, docs, and conventions before
+   planning. Give the goal and each plan step an observable check. When
+   using eatmycode, run its Version and Freshness Gate before trusting
+   architecture; include versions, migration scope, Index/agent-file
+   changes, and verification commands in architecture plans. Resolve
+   uncertainty from evidence and record the narrowest supported assumptions.
+   Only Planner may ask one focused question, when a required decision
+   cannot be discovered or safely inferred and guessing changes the result.
+2. **Write:** Apply Coding Discipline. Make the planned change; for a
+   repair, address only named findings. Update affected architecture with
+   changes to its documented contracts.
+3. **Prove:** Run relevant tests and structural checks, retaining observable
+   evidence. For architecture work under eatmycode, apply its Architecture
+   Verification. Failures and missing, duplicate, or obsolete coverage
+   become Coder findings. Re-run affected checks after repairs; never send
+   a red result to Review.
+4. **Review:** Apply every Review Check as a separate pass over full affected
+   files. Use an independent agent or isolated pass for Fit, Dependencies,
+   and Security when available. Return findings to Coder, then re-prove
+   and re-review the repairs.
+5. **Gate:** Confirm completion only when the Definition of Done passes.
+   Return unmet criteria to the responsible stage; continue until resolved.
+   If an external constraint prevents verification, state the missing
+   evidence and remaining work without claiming completion or readiness.
 
-**2. Write.** Make the smallest change that reaches the goal. Add no
-unrequested features or abstractions, match local style, touch only
-in-scope code, and remove only orphans created by the change.
-
-**3. Prove.** Run relevant tests and retain observable evidence.
-
-*Survey the suite before touching it.* Before adding, changing, merging,
-or deleting any test, inventory the whole suite: enumerate every test
-file and case name, then read in full each test whose subject, fixtures,
-or assertions touch this change. Use a subagent for broad inventory when
-supported. From that inventory decide the complete set of test edits at
-once — what to change, what to add, what to merge, what to remove — each
-backed by `file:line`, then execute only that plan. Never write a test
-before the survey, and never discover existing coverage afterward.
-
-The plan obeys four rules:
-
-- **Reuse or extend first.** Add a case to the test that already owns
-  the behavior or shares its setup, fixtures, and subject. A new test
-  function or file is justified only when the survey found no existing
-  test owning the behavior, or when merging would hide which case
-  failed.
-- **Add only what the goal needs.** A bug fix needs a reproducing
-  regression test; a new capability needs a test of its claimed
-  behavior. Nothing further.
-- **Retire what this change made obsolete.** Delete tests whose behavior
-  no longer exists, and merge tests this change turned into duplicates,
-  citing the surviving test. Leave unrelated pre-existing tests alone;
-  record suspected redundancy under **Open Gaps / Roadmap**.
-- **Never delete to reach green.** A failing test is a finding for
-  Write. Removal requires evidence that its behavior is gone or is still
-  covered elsewhere, cited by `file:line`.
-
-Coverage of claimed behavior must not decrease. A failure returns
-directly to Write, never forward to Review.
-
-**4. Review.** Walk all seven Review Checks as separate passes. Read
-whole affected files, not only the diff. Every finding needs `file:line`
-evidence. Use an independent agent or isolated pass for Fit,
-Dependencies, and Security when available.
-
-**5. Gate.** Apply the Definition of Done. Any unticked criterion,
-`blocker`, or unresolved `major` returns its evidence to Write. All
-criteria passing means the change is ready for public or production
-release. There is no separate approval or reporting phase.
+Handoffs are automatic. Continue without pauses for plan approval,
+permission to continue, or review/reporting ceremonies. Finish with the
+harness's normal concise completion handoff.
 
 ### Definition of Done
 
-**Correctness**
-
-- The framed goal and its named check pass.
-- Tests cover claimed behavior and pass; a bug fix has a regression test.
-- The suite was surveyed before any test was written, changed, or
-  deleted; no added test duplicates coverage another test owns, and no
-  removal left claimed behavior uncovered.
-- The owning module's **How to Test** command passes with evidence.
-- The project builds and tests from a fresh clone without local-only
-  dependencies.
-
-**Review**
-
-- All seven Review Checks ran; none was skipped or assumed.
-- No `blocker` or unresolved `major` remains.
-- Nits were applied or consciously declined.
-
-**Legibility and contract**
-
-- An agent can locate the owning code, identify language/style/design
-  constraints, select a safe change or refactor, review its impact, and
-  run the right checks from `ARCHITECTURE.md` and the owning module docs.
-- Every changed line serves the goal; no drive-by formatting, debugging
-  remnants, commented-out code, secrets, tokens, or local paths remain.
-- Public names, signatures, errors, and recovery are intelligible.
-- Architecture docs and `file:line` references reflect current source;
-  version stamps certify a verified contract migration, not just a
-  metadata edit.
-- Architecture docs contain only coding context; any encountered
-  deployment guides or other non-coding material and obsolete links were
-  removed from the doc set.
-- Breaking changes, deprecations, dependencies, licenses, and attribution
-  are handled; commit or PR text explains why.
+- **Correctness:** The goal and named checks pass. Tests cover claimed
+  behavior; bug fixes have a reproducing regression test. The project
+  builds and tests from a fresh clone without local-only dependencies.
+  Owning modules' **How to Test** commands pass with evidence.
+- **Review:** Every Review Check ran and its completion threshold passes.
+- **Contract:** Docs reflect source and let an agent locate owners,
+  constraints, and verification commands. When using eatmycode, architecture
+  satisfies its Output Contract, verification, and version rules. Public
+  names, signatures, errors, and recovery are intelligible. Breaking
+  changes, deprecations, dependencies, licenses, and attribution are handled;
+  commit or PR text, when present, explains why.
+- **Scope:** Changed lines serve the goal and follow Coding Discipline;
+  no debugging remnants, commented-out code, secrets, tokens, or local paths
+  remain. Test edits follow the inventory and coverage rules below.
 
 ### Iterating without thrashing
 
-- Every pass closes a named finding and touches only what it names.
-- Nits alone do not trigger another pass.
-- Re-run Prove after every fix.
-- Two no-change passes force Gate re-evaluation: release if Done passes;
-  otherwise return the surviving evidence to Frame.
-- Three passes on one finding return automatically to Frame for a new
-  approach.
-- Never widen scope to satisfy a finding. Record coding-related follow-up
-  work under **Open Gaps / Roadmap**; keep non-coding work outside the
-  architecture doc set.
+- Each repair pass targets a named finding; nits alone do not trigger one.
+- Two no-change passes force Gate re-evaluation. If Done still fails,
+  return the surviving evidence to Frame.
+- Three passes against the same finding return to Frame for a new approach.
+- Never widen scope to satisfy a finding. Record coding follow-ups under
+  **Open Gaps / Roadmap** and keep non-coding work outside architecture.
 
 ## Coding Discipline
 
-### 1. Think Before Coding
-
-- Understand the request, code, goal, and repository conventions first.
-- Record assumptions and choose the narrowest evidence-backed reading.
-- Prefer the simpler approach when it reaches the same verified goal.
-- Ask only during planning and only for a required answer that cannot be
-  discovered or safely inferred.
-
-### 2. Simplicity First
-
-- Implement only what was requested.
-- Do not add single-use abstractions, speculative flexibility, or checks
-  for impossible conditions.
-- If the implementation is materially larger than the problem, simplify
-  it.
-
-### 3. Surgical Changes
-
-- Do not refactor, reformat, or clean up unrelated code.
-- Match the surrounding style.
-- Remove imports, variables, and functions made unused by this change;
+- Implement only the goal. Prefer the simplest approach that passes its
+  checks; simplify code materially larger than the problem.
+- Match local style. Avoid speculative features, flexibility, single-use
+  abstractions, and checks for impossible conditions.
+- Keep edits surgical: no unrelated refactoring, reformatting, or cleanup.
+  Remove imports, variables, and functions made unused by this change;
   leave pre-existing dead code alone unless requested.
-- Every changed line must trace to the stated goal.
+- Make success concrete: validation rejects invalid input in a named test;
+  a regression test fails before a bug fix and passes after; behavior tests
+  pass before and after a refactor.
 
-### 4. Goal-Driven Execution
+### Before editing tests
 
-Turn work into verifiable outcomes, then loop until they pass:
+Before any test edit, including during Write, inventory the whole suite:
+enumerate every test file and case name, then read in full tests whose
+subject, fixtures, or assertions touch the change. Use a subagent for broad
+inventory when supported. Plan all additions, changes, merges, and removals
+from that evidence, citing `file:line`, before executing the test edits.
 
-- Add validation → invalid inputs are rejected by a named passing test.
-- Fix a bug → a regression test fails before the fix and passes after.
-- Refactor → behavior tests pass before and after.
-
-Give every plan step its own check. Strengthen vague criteria from
-repository evidence before implementation.
+- **Reuse first:** Extend the test owning the behavior or sharing its
+  setup, fixtures, and subject. Add a function/file only if no existing
+  owner fits or merging would obscure which case failed.
+- **Add only required coverage:** A bug fix needs its regression test;
+  a capability needs a test of its claimed behavior. Avoid duplicates.
+- **Retire only what changed:** Remove tests of deleted behavior and merge
+  new duplicates, citing surviving coverage. Record unrelated suspected
+  redundancy under **Open Gaps / Roadmap**.
+- **Preserve coverage:** Never delete or weaken tests to turn red green.
+  Removal needs evidence that behavior is gone or covered elsewhere;
+  coverage of claimed behavior must not decrease.
 
 ## Review Checks
 
-Run every check against every change before merge. Keep checks separate.
+Run every check against every change before confirming a code edit is
+complete, even when no commit or merge is requested. Keep checks separate.
 
-Four rules bind all checks:
+- **Evidence or no finding:** Cite `file:line` for every finding.
+- **Repository authority:** Demand only conventions supported by the tree.
+- **Full context:** Read affected files, not only hunks; context can expose
+  unreachable code, unused parameters, or hidden duplication.
+- **Code and impact:** Review the change, never the author or how it was made.
 
-- **Evidence or no finding.** Every finding cites `file:line`.
-- **The repository is authoritative.** Demand only conventions visible
-  in the tree.
-- **Read files, not only hunks.** Context can invalidate a finding or
-  reveal unreachable code, unused parameters, and hidden duplication.
-- **Review the change, never the author.** Describe code and impact, not
-  how or by whom it was produced.
+### 1. Style and Naming
 
-### 1. Style
+Check indentation and local conventions; leave machine-checkable formatting
+to existing formatters/linters and never demand unrelated reformatting.
+Mixed indentation is `major`; a consistent new file with the wrong local
+indent is `nit`. Compare names with nearby precedents. If the repository
+is inconsistent, demand nothing. A local naming mismatch is `nit`; an
+inconsistent public name is `major`.
 
-Check indentation and local file conventions. Mixed indentation is
-`major`; a consistent new file using the wrong local indent is `nit`.
-Leave machine-checkable formatting to existing formatters and linters;
-never demand unrelated reformatting.
+### 2. Duplication
 
-### 2. Naming
+Search distinctive constants, errors, fields, and call sequences, beyond
+symbol names, for the same job. Cite both sites and a remedy. Cross-layer
+duplication is `major`; small local repetition is `nit`. Similar code with
+meaningfully different branches is not duplication.
 
-Compare new names with nearby precedents before filing a finding. If the
-repository is inconsistent, demand nothing. A local mismatch is `nit`;
-an inconsistent public name is `major`.
-
-### 3. Duplication
-
-Search distinctive constants, errors, fields, and call sequences—not
-only symbol names—for code performing the same job. Cite both sites and
-the remedy. Cross-layer duplication is `major`; small local repetition
-is `nit`. Similar code with meaningfully different branches is not
-duplication.
-
-### 4. Quality
+### 3. Quality
 
 Require followable control flow, errors handled where they occur, and
-abstractions proportional to the problem. Swallowed errors,
-inappropriate prints, unexplained magic values, and dead branches are
-`major`. Remove unrequested configurability, one-caller wrappers, filler
-comments, debugging remnants, and unrelated formatting. Missing tests
-belong to Prove, not this check.
+proportionate abstractions. Swallowed errors, inappropriate prints,
+unexplained magic values, and dead branches are `major`. Remove unrequested
+configurability, one-caller wrappers, filler comments, debugging remnants,
+and unrelated formatting. Missing tests belong to Prove.
 
-### 5. Fit
+### 4. Fit
 
-Read `ARCHITECTURE.md` and the owning module doc before the diff. Check
-documented language/toolchain constraints, code-design conventions,
-scope, layering, ownership, invariants, public-API growth, compatibility,
-and performance claims against source evidence. A layering violation or
-unjustified public API is `major`. Architectural or public-behavior changes
-must update the relevant docs in the same change.
+Read the root architecture and owning module before the diff. Check
+language/toolchain constraints, conventions, scope, layering, ownership,
+invariants, public-API growth, compatibility, and performance claims against
+source. A layering violation or unjustified public API is `major`.
+Architectural/public-behavior changes need matching docs in the same change.
 
-### 6. Dependencies
+### 5. Dependencies
 
-Check manifests and imports, maintenance, supply-chain risk, advisories,
-install-time behavior, license, transitive cost, and whether the standard
-library is sufficient. An unjustified top-level dependency is `major`;
-a live advisory or abandoned upstream is `blocker`. Incomplete evidence
-does not pass.
+Check manifests/imports, maintenance, supply-chain risk, advisories,
+install-time behavior, license, transitive cost, and standard-library
+alternatives. An unjustified top-level dependency is `major`; a live
+advisory or abandoned upstream is `blocker`. Incomplete evidence does not pass.
 
-### 7. Security
+### 6. Security
 
-Check both defects and widened exposure: unsafe memory access, unchecked
-sizes or offsets, integer overflow, path traversal, unsafe
-deserialization, command construction, committed secrets, and unbounded
-untrusted input. Trace input to impact; without a reachable path there is
-no finding. A real defect is `major`; a trust-boundary break is `blocker`.
-Describe the fix without publishing exploit steps.
+Check defects and widened exposure: unsafe memory access, unchecked sizes
+or offsets, integer overflow, traversal, unsafe deserialization, command
+construction, committed secrets, and unbounded untrusted input. Trace input
+to impact; without a reachable path there is no finding. A real defect is
+`major`; a trust-boundary break is `blocker`. Describe fixes without exploit
+steps.
 
-### Severity and the merge threshold
+### Severity and the completion threshold
 
 | Severity | Effect |
 | -------- | ------ |
-| `blocker` | Must not merge. |
-| `major` | Must be resolved before merge. |
+| `blocker` | Must not confirm completion or merge. |
+| `major` | Must be resolved before confirming completion or merging. |
 | `nit` | Apply or consciously decline. |
 | `info` | Context or a question; no action implied. |
 
-Merge only with no `blocker` and no unresolved `major`. A check that did
-not run does not pass. Findings feed Write and Gate directly; they do not
-create a reporting phase.
+Confirm completion or merge only with no `blocker` or unresolved `major`.
+A check that did not run does not pass; explain evidence-backed
+inapplicability. Findings feed Write and Gate directly.
 
 ### Project-Specific Deviations
 
-- The shared release checks govern development of this tool. Reviews of target
+- The shared development checks govern changes to this tool. Reviews of target
   submissions inspect source and documentation only; they never claim a target
   test run or full eatmycode release compliance. This does not waive this
   project's own build, test or review criteria.
-- Target documentation preparation checks only the root `ARCHITECTURE.md`
-  version. A matching version skips preparation without checking modules,
-  structure, references or agent guidance. The context discloses the skipped
-  checks; review panels still inspect relevant source. See
+- The review product retains seven separate checklist keys, including Style
+  and Naming, as enforced by `reporting.py:9`. The shared development rubric
+  groups those topics in one check without changing the review result schema.
+- Target preflight checks every architecture Markdown version and file size.
+  Matching docs skip the documentation source audit; the review panel still
+  inspects relevant source and the context discloses the skipped checks. See
   [preflight](ARCHITECTURE/architecture-preflight.md).
 - The generic review rubric requires a demonstrated need before approval.
   Preserve `Need: justified`, `Need: unclear` or `Need: unnecessary` in Fit's
@@ -457,8 +408,8 @@ create a reporting phase.
 | ------------- | ------------ | ---------------------------------- |
 | [Workflow and launcher](ARCHITECTURE/review-cli.md) | `review.py`, `code.sh`, `progress.py`, `repo_facts.py` | Routing, configuration, source/guide flow, shared progress and measured PR leads; read I/O, preflight and panel partners when changing coordination |
 | [Architecture preflight](ARCHITECTURE/architecture-preflight.md) | `architecture.py`, `gameplans/architecture_docs.md`, `personas/docs_*.md` | Upstream contract, freshness, source audit, document validation/migration and local writes; consult panel and Git contracts |
-| [Panels, tools and ballots](ARCHITECTURE/harness.md) | `panel_runtime.py`, `session_builder.py`, `agent_tools.py`, `gameplans/`, `personas/`, `patches/`, `requirements.txt` | Runtime, rosters, read boundaries, progress, strict completion and dependency integration; PR/issue gameplans and non-doc personas owned here; docs behavior belongs to preflight |
-| [Report and approval policy](ARCHITECTURE/reporting.md) | `reporting.py` | Result/citation validation, approval eligibility and rendering; ballot changes also require panel/CLI review |
+| [Reviews, tools and verification](ARCHITECTURE/harness.md) | `panel_runtime.py`, `session_builder.py`, `agent_tools.py`, `gameplans/`, `personas/`, `patches/`, `requirements.txt` | Runtime, rosters, read boundaries, progress, strict completion and dependency integration; PR/issue gameplans and non-doc personas owned here; docs behavior belongs to preflight |
+| [Report and approval policy](ARCHITECTURE/reporting.md) | `reporting.py` | Result/citation validation, approval eligibility and rendering; assessment changes also require runtime/CLI review |
 | [GitHub access](ARCHITECTURE/github-io.md) | `github_io.py` | Service reads, kind detection, permitted report writes and shared command restrictions; inspect Git/CLI callers |
 | [Git checkouts](ARCHITECTURE/git-io.md) | `git_io.py` | Origins, clean clones, isolated branch/merge sources, pinned diffs and guide worktrees; consult preflight/CLI source ownership |
 | [Profiles and prompts](ARCHITECTURE/prompts.md) | `prompts/`, profile/topic functions in `review.py` | Supplementary Markdown knowledge and review rubric; source authority and report gates constrain changes |

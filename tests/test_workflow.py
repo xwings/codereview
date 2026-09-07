@@ -25,22 +25,33 @@ import session_builder
 
 def pr_fields():
     return {
-        "verdict": "approve", "review_body": "This change fixes the documented input handling.",
-        "findings": [],
+        "recommendation": "merge", "reason": "No unresolved objection at app.py:1.",
+        "review_body": "This change fixes the documented input handling.", "findings": [], "questions": [],
         "checklist": {
-        name: {"status": "pass", "note": ("Need: justified — " if name == "fit" else "")
-               + "app.py:1 meets the documented contract."} for name in reporting.CHECKS
+            name: {"status": "pass", "note": ("Need: justified — " if name == "fit" else "")
+                   + "app.py:1 meets the documented contract."} for name in reporting.CHECKS
         },
-        "chair_vote": {"vote": "merge", "reason": "All objections resolved against app.py:1."},
     }
+
+
+def issue_fields(classification="support"):
+    return {"classification": classification, "response_body": "The return value is expected.",
+            "evidence": [{"file": "app.py", "line": 2, "note": "Returns one."}],
+            "next_steps": [], "labels": ["question"], "questions": []}
+
+
+def record(fields):
+    return "RESULT " + json.dumps(fields)
 
 
 class ScriptedProvider(kerness.Provider):
     def __init__(self, replies):
         super().__init__(retries=0, backoff_sec=0)
         self.replies = iter(replies)
+        self.calls = []
 
     def chat_with_retries(self, model, messages, purpose=""):
+        self.calls.append(copy.deepcopy(messages))
         return kerness.ProviderResponse(content=next(self.replies), model=model)
 
     def chat(self, model, messages):
@@ -66,16 +77,19 @@ class ProgressStream(io.StringIO):
 
 
 def scripted_replies(kind, fields):
+    if kind == "pr":
+        return [record(fields | {"specialists": {}}), record(fields | {"finding_reviews": []})]
+    if kind == "issue":
+        return [record(fields | {"verify": False})] + (
+            [record(fields)] if fields["classification"] not in {"support", "needs_information"} else [])
     replies = []
-    for phase in panel_runtime.PHASES[kind]:
-        for seat, _ in panel_runtime.PANELS[kind]:
+    for phase in panel_runtime.PHASES["docs"]:
+        for seat, _ in panel_runtime.PANELS["docs"]:
             replies += [f"@{seat}, review your area.", "Read app.py:1 and the architecture; no unresolved concern."
-                        + ('\nBALLOT {"vote":"merge","reason":"Objection resolved at app.py:1."}'
-                           if phase == "vote" else "")
                         + ('\nDOCS_AUDIT {"accepted":true,"reason":"All source and modules checked."}'
-                           if kind == "docs" and phase == "verify" and seat == "DocsVerifier" else "")]
+                           if phase == "verify" and seat == "DocsVerifier" else "")]
     result = "```json\n" + json.dumps(fields) + "\n```"
-    return replies + [result, result]  # private draft, then final verdict rethink
+    return replies + [result, result]
 
 
 class WorkflowTests(unittest.TestCase):
@@ -85,28 +99,39 @@ class WorkflowTests(unittest.TestCase):
         self.clone = Path(self.directory.name)
         (self.clone / "app.py").write_text("def main():\n    return 1\n\nmain()\n")
         self.fields = pr_fields()
-        self.votes = [{"agent": seat, "vote": "merge", "reason": "No unresolved objection at app.py:1."}
-                      for seat in [*(s for s, _ in panel_runtime.PANELS["pr"]), "Chair"]]
+        self.assessments = [{"agent": actor, "recommendation": "merge", "reason": self.fields["reason"]}
+                            for actor in ("Lead", "Verifier")]
         self.pr = {"state": "OPEN", "isDraft": False}
 
-    def build(self, kind, replies, transcript=None):
+    def build(self, kind, replies, transcript=None, **kwargs):
         builder = {"pr": session_builder.build_pr_session,
                    "issue": session_builder.build_issue_session,
                    "docs": session_builder.build_docs_session}[kind]
+        self.provider = ScriptedProvider(replies)
         return builder(topic="Inspect this checkout.", clone=self.clone,
-                       provider=ScriptedProvider(replies), model="offline-fixture",
-                       transcript=transcript, max_turns=None)
+                       provider=self.provider, model="offline-fixture",
+                       transcript=transcript, **({"max_turns": None} | kwargs))
 
-    def test_real_sessions_complete_all_panels_and_attribute_votes(self):
-        cases = {
-            "pr": self.fields,
-            "issue": {"classification": "support", "response_body": "The return value is expected.",
-                      "evidence": [{"file": "app.py", "line": 2, "note": "Returns one."}],
-                      "next_steps": [], "labels": ["question"]},
-            "docs": {"documents": {"ARCHITECTURE/retired.md": None},
-                     "audited": True, "summary": "Inspected source."},
-        }
-        for kind, fields in cases.items():
+    def test_real_sessions_complete_required_reviews_and_attribute_assessments(self):
+        cases = []
+        for names in ([], ["Security"], ["Dependencies"], ["Dependencies", "Security"]):
+            lead = self.fields | {"specialists": {name: f"Check {name} at app.py:1." for name in names}}
+            consultants = {name: {"findings": [], "questions": [], "summary": f"{name} evidence sentinel app.py:1"}
+                           for name in ("Security", "Dependencies") if name in names}
+            replies = [record(lead), *(record(value) for value in consultants.values()),
+                       record(self.fields | {"finding_reviews": []})]
+            cases.append(("pr", replies, ["Lead", *consultants, "Verifier"], self.fields))
+        for classification in ("support", "needs_information", "bug", "feature", "documentation", "upstream"):
+            for verify in (False, True):
+                fields = issue_fields(classification)
+                required = verify or classification not in {"support", "needs_information"}
+                replies = [record(fields | {"verify": verify}), *([record(fields)] if required else [])]
+                cases.append(("issue", replies, ["Investigator", *(["Verifier"] if required else [])],
+                              fields | {"verification": "independent" if required else "single_investigation"}))
+        docs = {"documents": {"ARCHITECTURE/retired.md": None}, "audited": True, "summary": "Inspected source."}
+        cases.append(("docs", scripted_replies("docs", docs),
+                      ["DocsPlanner", "DocsWriter", "DocsVerifier"] * 3, docs))
+        for index, (kind, replies, actors, fields) in enumerate(cases):
             err = ProgressStream()
             original_chat = ScriptedProvider.chat_with_retries
 
@@ -115,52 +140,140 @@ class WorkflowTests(unittest.TestCase):
                 self.assertTrue(err.flushed.wait(2), "No heartbeat during a blocked model request")
                 return original_chat(provider, model, messages, purpose)
 
-            with self.subTest(kind=kind), redirect_stderr(err), redirect_stdout(io.StringIO()) as out, \
-                    patch.object(progress, "INTERVAL_SECONDS", 0.01), \
+            with self.subTest(kind=kind, actors=actors, case=index), redirect_stderr(err), \
+                    redirect_stdout(io.StringIO()) as out, patch.object(progress, "INTERVAL_SECONDS", 0.01), \
                     patch.object(ScriptedProvider, "chat_with_retries", delayed_chat):
-                transcript = self.clone / f"{kind}.txt"
-                replies = scripted_replies(kind, fields)
-                replies.insert(1, '```tool_calls\n[{"name":"read_file","arguments":{"path":"app.py"}}]\n```')
-                result = panel_runtime.run_session(self.build(kind, replies, transcript), kind)
+                transcript = self.clone / f"{kind}-{index}.txt"
+                expected_calls = len(replies) + 1
+                replies.insert(1 if kind == "docs" else 0,
+                               '```tool_calls\n[{"name":"read_file","arguments":{"path":"app.py"}}]\n```')
+                result = panel_runtime.run_session(self.build(kind, replies, transcript), kind, clone=self.clone)
                 self.assertEqual(result.fields, fields)
-                self.assertEqual(len(result.votes), 8 if kind == "pr" else 0)
+                self.assertEqual([m["sender"] for m in result.history if m["msg_type"] == "turn"], actors)
+                self.assertEqual(len(self.provider.calls), expected_calls)
+                if kind == "pr":
+                    self.assertEqual(result.assessments, self.assessments)
+                    self.assertEqual(set(result.fields["checklist"]), set(reporting.CHECKS))
+                    lead_system = "\n".join(m["content"] for m in self.provider.calls[0] if m["role"] == "system")
+                    verifier_system = "\n".join(m["content"] for m in self.provider.calls[-1] if m["role"] == "system")
+                    for instructions in (lead_system, verifier_system):
+                        self.assertIn("RESULT {JSON}", instructions)
+                        self.assertIn("`specialists`", instructions)
+                        self.assertIn("`finding_reviews`", instructions)
+                    for detail in ("Mixed\n   indentation is major", "comparable definitions and callers",
+                                   "distinctive constants, errors, fields and call sequences",
+                                   "Trace control flow and failure handling", "benefit relative to API growth",
+                                   "license obligations, install-time behavior", "Map affected trust boundaries"):
+                        self.assertIn(" ".join(detail.split()), " ".join(lead_system.split()))
+                    self.assertIn("A clean initial review still needs", verifier_system)
+                    self.assertIn("independently confirm its input, code path", verifier_system)
+                    verifier_context = str(self.provider.calls[-1])
+                    self.assertIn(lead["review_body"], verifier_context)
+                    self.assertIn("Finding catalogue", verifier_context)
+                    for actor in actors[1:-1]:
+                        self.assertIn(f"{actor} evidence sentinel", verifier_context)
+                elif kind == "issue":
+                    for call in (self.provider.calls[0], self.provider.calls[-1]):
+                        instructions = "\n".join(m["content"] for m in call if m["role"] == "system")
+                        self.assertIn("RESULT {JSON}", instructions)
+                        self.assertIn("boolean `verify`", instructions)
+                if kind != "docs":
+                    self.assertEqual(result.end_reason, "host_finished")
+                    self.assertNotIn("Chair", actors)
+                    self.assertIn(f"step {len(actors)}", err.getvalue())
+                else:
+                    self.assertIn("specialist turns 9/9", err.getvalue())
+                    self.assertIn("phase 3/3", err.getvalue())
                 self.assertEqual(out.getvalue(), "")
-                self.assertIn("app.py:1", transcript.read_text())
-                total = len(panel_runtime.PANELS[kind]) * len(panel_runtime.PHASES[kind])
-                self.assertIn(f"specialist turns {total}/{total}", err.getvalue())
-                self.assertIn(f"phase {len(panel_runtime.PHASES[kind])}/{len(panel_runtime.PHASES[kind])}", err.getvalue())
+                self.assertIn("app.py:1" if kind != "issue" else "app.py", transcript.read_text())
                 self.assertIn("inspecting evidence", err.getvalue())
                 self.assertIn("validating participation and final result", err.getvalue())
                 self.assertIn("Done:", err.getvalue())
                 self.assertNotIn("Read app.py:1", err.getvalue())
                 self.assertNotIn("Still working:", transcript.read_text())
                 self.assertFalse((self.clone / "session.json").exists())
+                self.assertFalse((self.clone / "memory.md").exists())
+
+        with tempfile.TemporaryDirectory() as directory:
+            guide = Path(directory)
+            (guide / "ARCHITECTURE.md").write_text("ALLOWED_GUIDE_SENTINEL")
+            (guide / "ARCHITECTURE/details").mkdir(parents=True)
+            (guide / "ARCHITECTURE/details/return.md").write_text("NESTED_GUIDE_SENTINEL")
+            (guide / "private.py").write_text("FORBIDDEN_SOURCE_SENTINEL")
+            (self.clone / "escape.py").symlink_to(guide / "private.py")
+            attempts = [{"name": "read_file", "arguments": {"path": str(path)}} for path in
+                        (guide / "ARCHITECTURE.md", guide / "ARCHITECTURE/details/return.md",
+                         guide / "private.py", self.clone / "escape.py")]
+            attempts += [{"name": "cmd", "arguments": {"command": "unavailable-command"}},
+                         {"name": "write_file", "arguments": {"path": "app.py", "content": "CHANGED"}}]
+            replies = ["```tool_calls\n" + json.dumps(attempts) + "\n```", *scripted_replies("pr", self.fields)]
+            with redirect_stderr(io.StringIO()):
+                panel_runtime.run_session(self.build("pr", replies, documentation=guide), "pr", clone=self.clone)
+            context = str(self.provider.calls[1])
+            self.assertIn("ALLOWED_GUIDE_SENTINEL", context)
+            self.assertIn("NESTED_GUIDE_SENTINEL", context)
+            self.assertNotIn("FORBIDDEN_SOURCE_SENTINEL", context)
+            self.assertIn("return 1", (self.clone / "app.py").read_text())
+            self.assertEqual(context.lower().count("which is outside the workspace"), 2)
+            self.assertIn("unknown tool", context.lower())
+            (guide / "ARCHITECTURE/details/escape.md").symlink_to(self.clone / "app.py")
+            with self.assertRaises(ValueError):
+                self.build("pr", [], documentation=guide)
 
     def test_incomplete_or_malformed_results_never_become_a_review(self):
-        for replies in (["END_REVIEW", "{}", "{}"],
-                        scripted_replies("pr", self.fields)[:-2] + ["No JSON", "No JSON"]):
-            with self.subTest(replies=len(replies)), redirect_stderr(io.StringIO()):
-                with self.assertRaises(panel_runtime.PanelError):
-                    panel_runtime.run_session(self.build("pr", replies), "pr")
+        lead = self.fields | {"specialists": {}}
+        malformed = ["", "END_REVIEW", "RESULT {}", "RESULT []", "RESULT broken",
+                     record(lead) + "\n" + record(lead), record(lead) + "\nextra text",
+                     record(lead | {"extra": True}), record(lead | {"findings": "none"}),
+                     record(lead | {"specialists": {"Chair": "Check it"}}),
+                     record(lead | {"specialists": {"Security": ""}})]
+        for reply in malformed:
+            with self.subTest(reply=reply), redirect_stderr(io.StringIO()), \
+                    self.assertRaises((panel_runtime.PanelError, reporting.ReportError)):
+                panel_runtime.run_session(self.build("pr", [reply]), "pr", clone=self.clone)
+        for kind, fields in (("pr", self.fields), ("issue", issue_fields("bug"))):
+            with self.subTest(limit=kind), redirect_stderr(io.StringIO()), self.assertRaises(panel_runtime.PanelError):
+                panel_runtime.run_session(self.build(kind, scripted_replies(kind, fields), max_turns=1),
+                                          kind, clone=self.clone)
+        for verify in (1, "false", None):
+            with self.subTest(verify=verify), redirect_stderr(io.StringIO()), self.assertRaises(reporting.ReportError):
+                panel_runtime.run_session(self.build("issue", [record(issue_fields() | {"verify": verify})]),
+                                          "issue", clone=self.clone)
+        for final in ({}, self.fields | {"finding_reviews": "none"}):
+            with self.subTest(final=final), redirect_stderr(io.StringIO()), self.assertRaises(reporting.ReportError):
+                panel_runtime.run_session(self.build("pr", [record(lead), record(final)]), "pr", clone=self.clone)
+        with redirect_stderr(io.StringIO()), self.assertRaises(panel_runtime.PanelError):
+            panel_runtime.run_session(self.build("docs", ["END_REVIEW", "{}", "{}"]), "docs")
+        fake = Mock()
+        fake.start.return_value.step.return_value = {"status": "waiting", "reason": {"kind": "approval"}}
+        with redirect_stderr(io.StringIO()), self.assertRaises(panel_runtime.PanelError):
+            panel_runtime.run_session(fake, "pr", clone=self.clone)
 
-    def test_chair_cannot_fill_a_missing_or_forged_specialist_ballot(self):
+    def test_final_report_requires_authenticated_independent_results(self):
         with redirect_stderr(io.StringIO()):
-            result = panel_runtime.run_session(self.build("pr", scripted_replies("pr", self.fields)), "pr")
-        for mutation in ("missing-turn", "chair-sender", "missing-ballot", "bad-ballot", "short-rounds"):
+            result = panel_runtime.run_session(self.build("pr", scripted_replies("pr", self.fields)),
+                                               "pr", clone=self.clone)
+        for mutation in ("missing", "duplicate", "reordered", "forged", "unrequested", "count", "end", "fields", "assessment"):
             changed = copy.deepcopy(result)
             turns = [m for m in changed.history if m["msg_type"] == "turn"]
-            if mutation == "missing-turn":
+            if mutation == "missing":
                 changed.history.remove(turns[-1])
-            elif mutation == "chair-sender":
-                turns[-1]["sender"] = "Chair"
-            elif mutation == "missing-ballot":
-                turns[-1]["content"] = "The chair can record my vote."
-            elif mutation == "bad-ballot":
-                turns[-1]["content"] = 'BALLOT {"vote":"merge","reason":""}'
+            elif mutation == "duplicate":
+                changed.history.append(copy.deepcopy(turns[-1]))
+            elif mutation == "reordered":
+                turns[0]["sender"], turns[-1]["sender"] = turns[-1]["sender"], turns[0]["sender"]
+            elif mutation in ("forged", "unrequested"):
+                turns[-1]["sender"] = "Lead" if mutation == "forged" else "Security"
+            elif mutation == "count":
+                changed.turns_completed -= 1
+            elif mutation == "end":
+                changed.end_reason = "max_turns"
+            elif mutation == "fields":
+                changed.fields["review_body"] = "Forged final answer"
             else:
-                changed.rounds_run -= 1
+                changed.assessments[-1]["recommendation"] = "hold"
             with self.subTest(mutation=mutation), self.assertRaises(panel_runtime.PanelError):
-                panel_runtime.validate_panel(changed, "pr")
+                panel_runtime.validate_panel(changed, "pr", clone=self.clone)
 
     def test_docs_verifier_can_veto_the_chairs_success_claim(self):
         fields = {"documents": {}, "audited": True, "summary": "Chair claims success."}
@@ -172,17 +285,19 @@ class WorkflowTests(unittest.TestCase):
                 with self.assertRaises(panel_runtime.PanelError):
                     panel_runtime.run_session(self.build("docs", replies), "docs")
 
-    def test_approval_requires_unanimity_complete_checks_need_and_open_pr(self):
-        self.assertEqual(reporting.validate_pr(self.fields, self.clone, self.votes, self.pr), ("approve", []))
-        for cause in ("dissent", "blocker", "concern", "need", "draft", "closed", "chair"):
-            fields, votes, pr = copy.deepcopy((self.fields, self.votes, self.pr))
-            if cause == "dissent":
-                votes[6]["vote"] = "hold"
+    def test_approval_requires_agreement_complete_checks_need_and_open_pr(self):
+        self.assertEqual(reporting.validate_pr(self.fields, self.clone, self.assessments, self.pr), ("approve", []))
+        for cause in ("Lead", "Verifier", "blocker", "concern", "style", "naming", "need", "draft", "closed", "question"):
+            fields, assessments, pr = copy.deepcopy((self.fields, self.assessments, self.pr))
+            if cause in ("Lead", "Verifier"):
+                next(a for a in assessments if a["agent"] == cause)["recommendation"] = "hold"
+                if cause == "Verifier":
+                    fields["recommendation"] = "hold"
             elif cause == "blocker":
                 fields["findings"] = [{"severity": "major", "file": "app.py", "line": 2,
                                        "message": "Wrong result", "fix": "Return the computed value."}]
-            elif cause == "concern":
-                fields["checklist"]["dependencies"]["status"] = "concern"
+            elif cause in ("concern", "style", "naming"):
+                fields["checklist"]["dependencies" if cause == "concern" else cause]["status"] = "concern"
             elif cause == "need":
                 fields["checklist"]["fit"]["note"] = "Need: unclear — missing use case."
             elif cause == "draft":
@@ -190,65 +305,112 @@ class WorkflowTests(unittest.TestCase):
             elif cause == "closed":
                 pr["state"] = "CLOSED"
             else:
-                fields["verdict"] = "comment"
+                fields["questions"] = ["What is the expected result?"]
             with self.subTest(cause=cause):
-                self.assertEqual(reporting.validate_pr(fields, self.clone, votes, pr)[0], "comment")
+                self.assertEqual(reporting.validate_pr(fields, self.clone, assessments, pr)[0], "comment")
+        for assessments in ([], self.assessments[:1], self.assessments[:1] * 2,
+                            self.assessments[:1] + [self.assessments[1] | {"agent": "Chair"}]):
+            with self.subTest(assessments=assessments), self.assertRaises(reporting.ReportError):
+                reporting.validate_pr(self.fields, self.clone, assessments, self.pr)
 
     def test_invalid_citations_and_missing_checks_stop_publication(self):
         (self.clone / "escape.py").symlink_to("/etc/passwd")
         for name, line in (("../missing", 1), ("escape.py", 1), ("app.py", 99), ("app.py", True)):
             with self.subTest(name=name, line=line), self.assertRaises(reporting.ReportError):
                 reporting.source_location(self.clone, {"file": name, "line": line})
-        del self.fields["checklist"]["security"]
-        with self.assertRaises(reporting.ReportError):
-            reporting.validate_pr(self.fields, self.clone, self.votes, self.pr)
+        for check in reporting.CHECKS:
+            fields = copy.deepcopy(self.fields)
+            del fields["checklist"][check]
+            with self.subTest(check=check), self.assertRaises(reporting.ReportError):
+                reporting.validate_pr(fields, self.clone, self.assessments, self.pr)
+        candidate = {"severity": "major", "file": "app.py", "line": 2, "message": "Wrong result", "fix": "Compute it."}
+        lead = self.fields | {"findings": [candidate], "specialists": {}}
+        disposition = {"finding": 1, "status": "withdrawn", "reason": "Documented return.", "file": "app.py", "line": 2}
+        for reviews in ([], [disposition, disposition], [disposition | {"finding": 2}],
+                        [disposition | {"finding": True}], [disposition | {"line": 99}],
+                        [disposition | {"reason": ""}], [disposition | {"status": "ignored"}]):
+            with self.subTest(reviews=reviews), self.assertRaises(reporting.ReportError):
+                reporting.assemble_pr(lead, {}, self.fields | {"finding_reviews": reviews}, self.clone)
 
     def test_report_is_ordered_and_distinguishes_hold_from_rejection(self):
-        self.votes[6].update(vote="hold", reason="Missing evidence | needs\nfollow-up")
-        verdict, reasons = reporting.validate_pr(self.fields, self.clone, self.votes, self.pr)
-        report = reporting.render_pr(self.fields, self.clone, self.votes, verdict, reasons, allow_approve=False)
-        self.assertTrue(report.startswith("## PR verdict: Hold"))
-        self.assertIn("7 merge · 1 hold · 0 reject", report)
-        self.assertIn("evidence \\| needs follow-up", report)
-        self.assertLess(report.index("### Panel votes"), report.index("## Findings"))
+        candidate = {"severity": "major", "file": "app.py", "line": 2, "message": "Wrong result", "fix": "Compute it."}
+        lead = self.fields | {"recommendation": "hold", "reason": "Missing evidence | needs\nfollow-up",
+                              "findings": [candidate], "questions": ["Lead question"],
+                              "specialists": {"Security": "Check input."}}
+        consultation = {"findings": [candidate | {"message": "Withdraw this"}, candidate | {"message": "Open concern"}],
+                        "questions": ["Consultant question"], "summary": "Source checked."}
+        reviews = [{"finding": number, "status": status, "reason": "Checked source.", "file": "app.py", "line": 2}
+                   for number, status in enumerate(("confirmed", "withdrawn", "unresolved"), 1)]
+        verified = self.fields | {"finding_reviews": reviews, "findings": [candidate | {"severity": "nit", "message": "New finding"}]}
+        fields, assessments = reporting.assemble_pr(lead, {"Security": consultation}, verified, self.clone)
+        self.assertEqual([f["message"] for f in fields["findings"]], ["Wrong result", "New finding"])
+        self.assertEqual(fields["questions"][:2], ["Lead question", "Consultant question"])
+        self.assertIn("Open concern", fields["questions"][-1])
+        verdict, reasons = reporting.validate_pr(fields, self.clone, assessments, self.pr)
+        report = reporting.render_pr(fields, self.clone, assessments, verdict, reasons, allow_approve=False)
+        self.assertTrue(report.startswith("## PR verdict: Changes requested"))
+        self.assertIn(r"evidence \| needs follow-up", report)
+        self.assertLess(report.index("### Review assessments"), report.index("## Findings"))
         self.assertEqual(report.count(self.fields["review_body"]), 1)
+        self.assertNotIn("Withdraw this", report)
+        self.assertIn("Open concern", report)
         self.assertIn("<summary>Seven review checks</summary>", report)
+        self.assertIn("| Language conventions | pass |", report)
+        self.assertIn("| API naming | pass |", report)
+        self.assertEqual(report.count("| Lead |"), 1)
+        self.assertEqual(report.count("| Verifier |"), 1)
+        self.assertNotIn("Panel votes", report)
+        for recommendation, title in (("hold", "Hold"), ("reject", "Do not merge")):
+            assessments[0]["recommendation"] = recommendation
+            verdict, reasons = reporting.validate_pr(self.fields, self.clone, assessments, self.pr)
+            report = reporting.render_pr(self.fields, self.clone, assessments, verdict, reasons, allow_approve=False)
+            self.assertTrue(report.startswith(f"## PR verdict: {title}"))
         self.assertEqual(reporting.fence("```\ncode\n```"), "````\n```\ncode\n```\n````")
 
     def test_issue_answer_requires_evidence_and_renders_concrete_next_steps(self):
-        fields = {"classification": "bug", "response_body": "The function returns a fixed value.",
-                  "evidence": [{"file": "app.py", "line": 2, "note": "Constant return."}],
-                  "next_steps": ["Share the expected return value."], "labels": ["bug"]}
+        initial = issue_fields("bug") | {"verify": False, "questions": ["Expected result?"]}
+        verified = issue_fields("support") | {"response_body": "The fixed value is documented.",
+                    "next_steps": ["Share the expected return value."], "questions": ["Which version?"]}
+        fields = reporting.assemble_issue(initial, verified, self.clone)
         report = reporting.render_issue(fields, self.clone)
-        self.assertIn("`app.py:2`", report)
-        self.assertIn("Share the expected return value.", report)
-        fields["evidence"] = []
+        for text in ("`app.py:2`", "Share the expected return value.", "Expected result?", "Which version?",
+                     "The fixed value is documented.", "Independent verification completed."):
+            self.assertIn(text, report)
+        single = reporting.assemble_issue(issue_fields() | {"verify": False}, None, self.clone)
+        self.assertIn("Single investigation", reporting.render_issue(single, self.clone))
+        for change in ({"evidence": []}, {"classification": "invented"}, {"verification": "maybe"}):
+            with self.subTest(change=change), self.assertRaises(reporting.ReportError):
+                reporting.render_issue(fields | change, self.clone)
         with self.assertRaises(reporting.ReportError):
-            reporting.render_issue(fields, self.clone)
-        fields["evidence"] = [{"file": "app.py", "line": 2, "note": "Constant return."}]
-        fields["classification"] = "invented"
-        with self.assertRaisesRegex(reporting.ReportError, "classification"):
-            reporting.render_issue(fields, self.clone)
+            reporting.assemble_issue(initial, None, self.clone)
 
     def test_compact_channel_keeps_raw_text_out_of_output(self):
         for verbose in (False, True):
-            with self.subTest(verbose=verbose), redirect_stdout(io.StringIO()) as out, \
-                    redirect_stderr(io.StringIO()) as err:
-                transcript = self.clone / f"channel-{verbose}.txt"
-                channel = panel_runtime.PanelChannel("pr", transcript, verbose)
-                channel.send("Chair", "RAW CHAIR DISCUSSION")
-                for _ in range(2):
-                    for seat, _ in panel_runtime.PANELS["pr"]:
-                        channel.send(seat, "RAW PRIVATE DISCUSSION")
-                self.assertEqual(channel.completed, 14)
-            self.assertEqual(out.getvalue(), "")
-            self.assertIn("Security researcher", err.getvalue())
-            self.assertIn("phase 1/5: study repo", err.getvalue())
-            self.assertIn("phase 2/5: review pr", err.getvalue())
-            self.assertIn("specialist turns 14/35", err.getvalue())
-            for raw in ("RAW PRIVATE DISCUSSION", "RAW CHAIR DISCUSSION"):
-                self.assertEqual(raw in err.getvalue(), verbose)
-                self.assertIn(raw, transcript.read_text())
+            for kind, actors in (("pr", ["Lead", "Security", "Verifier"]),
+                                 ("issue", ["Investigator", "Verifier"]),
+                                 ("docs", ["DocsPlanner", "DocsWriter", "DocsVerifier"] * 3)):
+                with self.subTest(verbose=verbose, kind=kind), redirect_stdout(io.StringIO()) as out, \
+                        redirect_stderr(io.StringIO()) as err:
+                    transcript = self.clone / f"channel-{kind}-{verbose}.txt"
+                    channel = panel_runtime.PanelChannel(kind, transcript, verbose)
+                    channel.send("Chair", "RAW CHAIR DISCUSSION")
+                    for actor in actors:
+                        channel.send(actor, "RAW PRIVATE DISCUSSION")
+                    self.assertEqual(channel.completed, len(actors))
+                self.assertEqual(out.getvalue(), "")
+                self.assertIn("phase 3/3" if kind == "docs" else f"step {len(actors)}", err.getvalue())
+                if kind != "docs":
+                    self.assertNotIn("phase", err.getvalue())
+                for raw in ("RAW PRIVATE DISCUSSION", "RAW CHAIR DISCUSSION"):
+                    self.assertEqual(raw in err.getvalue(), verbose)
+                    self.assertIn(raw, transcript.read_text())
+        for kind, fields in (("pr", self.fields), ("issue", issue_fields())):
+            with self.subTest(transcript_failure=kind), redirect_stderr(io.StringIO()) as err, \
+                    patch.object(kerness.FileChannel, "send", side_effect=OSError("Transcript unavailable")):
+                with self.assertRaises((OSError, panel_runtime.PanelError)):
+                    panel_runtime.run_session(self.build(kind, scripted_replies(kind, fields), self.clone / "failed.txt"),
+                                              kind, clone=self.clone)
+                self.assertNotIn("Done:", err.getvalue())
 
     def test_progress_heartbeat_stops_on_success_failure_and_interruption(self):
         for error in (None, ValueError("failed"), SystemExit(2), KeyboardInterrupt()):
@@ -283,21 +445,32 @@ class WorkflowTests(unittest.TestCase):
         with patch.object(github_io, "gh", return_value=response(1)), self.assertRaises(SystemExit):
             github_io.detect_kind("a/b", 1)
 
-    def test_prepare_docs_skips_all_preparation_for_a_current_root(self):
+    def test_prepare_docs_skips_preparation_only_for_a_current_document_set(self):
         args = SimpleNamespace(workdir=self.clone, transcript=None, llm_model="fixture",
                                max_turns=None, verbose=False)
         workspace = self.clone / "guide"
-        skill = review.architecture.Skill("abc123", "Specification", {}, "1.1.0")
+        skill = review.architecture.Skill("abc123", "Synthetic upstream specification", {}, "9.8.7")
         documents = {"ARCHITECTURE.md": "Architecture guidance", "ARCHITECTURE/command.md": "Command guidance"}
-        for version in ("1.1.0", "missing", None, "invalid", "1.0.0"):
+        module = self.clone / "ARCHITECTURE/command.md"
+        nested = self.clone / "ARCHITECTURE/details/return.md"
+        nested.parent.mkdir(parents=True)
+        cases = [(version, skill.version, skill.version) for version in (skill.version, "missing", None, "invalid", "1.0.0")]
+        cases += [(skill.version, "1.0.0", skill.version), (skill.version, "missing", "missing"),
+                  (skill.version, skill.version, "1.0.0"), (skill.version, skill.version, "oversized")]
+        for version, module_version, nested_version in cases:
+            for path, stamp in ((module, module_version), (nested, nested_version)):
+                path.unlink(missing_ok=True)
+                if stamp != "missing":
+                    content = f"---\neatmycode_version: {stamp if stamp != 'oversized' else skill.version}\n---\nGuidance"
+                    path.write_text(content + ("x" * 35_001 if stamp == "oversized" else ""))
             root = self.clone / "ARCHITECTURE.md"
             root.unlink(missing_ok=True)
             if version != "missing":
                 root.write_text("Architecture guidance" if version is None else
                                 f"---\neatmycode_version: {version}\n---\nArchitecture guidance")
-            audited = version != "1.1.0"
+            audited = (version, module_version, nested_version) != (skill.version, skill.version, skill.version)
             report = review.architecture.Report(skill.revision, (), documents, "Source inspected.")
-            with self.subTest(version=version), ExitStack() as stack:
+            with self.subTest(versions=(version, module_version, nested_version)), ExitStack() as stack:
                 err = stack.enter_context(redirect_stderr(io.StringIO()))
                 out = stack.enter_context(redirect_stdout(io.StringIO()))
                 worktree = stack.enter_context(patch.object(git_io, "review_workspace", return_value=workspace))
@@ -309,7 +482,7 @@ class WorkflowTests(unittest.TestCase):
                 def prepare(clone, active_skill, generate):
                     self.assertEqual(clone, workspace)
                     self.assertIs(active_skill, skill)
-                    self.assertIn("Checking baseline ARCHITECTURE.md version", err.getvalue())
+                    self.assertIn("Checking baseline architecture versions and sizes", err.getvalue())
                     self.assertNotIn("Auditing baseline architecture", err.getvalue())
                     self.assertEqual(generate("Audit topic"), fields)
                     return report
@@ -329,7 +502,8 @@ class WorkflowTests(unittest.TestCase):
                     self.assertEqual(builder.call_args.kwargs["topic"], "Audit topic")
                     run.assert_called_once_with(builder.return_value, "docs")
                 else:
-                    self.assertEqual(actual_report.documents, {"ARCHITECTURE.md": root.read_text()})
+                    self.assertEqual(actual_report.documents, {"ARCHITECTURE.md": root.read_text(),
+                        "ARCHITECTURE/command.md": module.read_text(), "ARCHITECTURE/details/return.md": nested.read_text()})
                     self.assertNotIn("documentation workspace", err.getvalue())
                 self.assertEqual("Auditing baseline architecture against source" in err.getvalue(), audited)
                 self.assertEqual("skipping documentation preparation" in err.getvalue(), not audited)
@@ -344,9 +518,12 @@ class WorkflowTests(unittest.TestCase):
                 self.assertNotIn("These documents are local guidance, separate", context)
 
     def test_kind_and_selected_source_precede_one_documentation_gate(self):
+        skill = review.architecture.Skill("abc123", "Synthetic upstream specification", {}, "9.8.7")
         source, guide = self.clone / "source", self.clone / "guide"
         source.mkdir()
         (source / "app.py").write_bytes((self.clone / "app.py").read_bytes())
+        (source / "ARCHITECTURE").mkdir()
+        (source / "ARCHITECTURE/command.md").write_text(f"---\neatmycode_version: {skill.version}\n---\nCommand guide.\n")
         actual_prepare_docs = review.prepare_docs
         for kind in ("issue", "pr"):
             for current_root in (False, True):
@@ -356,7 +533,7 @@ class WorkflowTests(unittest.TestCase):
                                        branch="release/selected", llm_model="fixture", transcript=None,
                                        max_turns=None, verbose=False, allow_approve=False)
                 (source / "ARCHITECTURE.md").write_text(
-                    "---\neatmycode_version: 1.1.0\n---\nOriginal guide.\n" if current_root else "Old guide.\n")
+                    f"---\neatmycode_version: {skill.version}\n---\nOriginal guide.\n" if current_root else "Old guide.\n")
                 snapshot = git_io.Source(source, "b" * 40, "c" * 40, "merged diff" if kind == "pr" else "")
                 pr = {"number": 1, "headRefOid": "a" * 40, "baseRefName": "main",
                       "state": "OPEN", "isDraft": False}
@@ -388,7 +565,7 @@ class WorkflowTests(unittest.TestCase):
                     stack.enter_context(patch.object(git_io, "assert_clone_clean"))
                     stack.enter_context(patch.object(git_io, "prepare_source", side_effect=prepare_source))
                     stack.enter_context(patch.object(review.architecture, "sync_skill", side_effect=lambda *a:
-                        events.append("skill") or review.architecture.Skill("abc123", "Specification", {}, "1.1.0")))
+                        events.append("skill") or skill))
                     stack.enter_context(patch.object(session_builder, "build_provider"))
                     gate = stack.enter_context(patch.object(review, "prepare_docs", side_effect=prepare_docs))
                     preparation = stack.enter_context(patch.object(review.architecture, "prepare"))
@@ -399,9 +576,9 @@ class WorkflowTests(unittest.TestCase):
                     fields = self.fields if kind == "pr" else {
                         "classification": "support", "response_body": "The result is expected.",
                         "evidence": [{"file": "app.py", "line": 2, "note": "Returns one."}],
-                        "next_steps": [], "labels": []}
-                    stack.enter_context(patch.object(panel_runtime, "run_session", side_effect=lambda *a:
-                        events.append("panel") or SimpleNamespace(fields=fields, votes=self.votes)))
+                        "next_steps": [], "labels": [], "questions": [], "verification": "single_investigation"}
+                    stack.enter_context(patch.object(panel_runtime, "run_session", side_effect=lambda *a, **k:
+                        events.append("panel") or SimpleNamespace(fields=fields, assessments=self.assessments)))
                     finish = stack.enter_context(patch.object(review, "finish",
                                                              side_effect=lambda *a, **k: events.append("answer") or 0))
                     self.assertEqual(review.main(), 0)
@@ -457,7 +634,7 @@ class WorkflowTests(unittest.TestCase):
         fields = pr_fields()
         fields["findings"] = [{"severity": "major", "file": "ARCHITECTURE.md", "line": 1,
                                "message": "Incorrect merged contract.", "fix": "Describe actual behavior."}]
-        result = SimpleNamespace(fields=fields, votes=self.votes)
+        result = SimpleNamespace(fields=fields, assessments=self.assessments)
         docs = SimpleNamespace(revision="abc", context=lambda: "Prepared guide")
         with ExitStack() as stack:
             err = stack.enter_context(redirect_stderr(io.StringIO()))

@@ -27,7 +27,8 @@ backstops the rest. Creating a directory here needs no Python change.
 - **`design.md`** — what *this* maintainer considers a blocker. It must define
   the severity vocabulary and the approve threshold; `../default/design.md`
   is the template. `reporting.validate_pr` always enforces unanimous merge
-  votes, justified need and no unresolved major/blocker findings.
+  recommendations from Lead and Verifier, justified need and no unresolved
+  questions or major/blocker findings.
 - **`coding_styles.md`** — only when the project's languages fall outside the
   four the shared file covers (Python, C, C++, Rust). Overriding it replaces
   the whole file, not one section.
