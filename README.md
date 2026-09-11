@@ -132,26 +132,68 @@ GitHub. Generated guide edits are excluded from citations.
 | `--transcript path.txt` | Save the discussion; a documentation panel uses a sibling `*-pr-N-docs` or `*-issue-N-docs` file. |
 | `--workdir path` | Store managed clones, isolated sources and guide worktrees here; defaults to this tool's `repo/`. |
 | `--prompts path` | Supply a custom supplementary repository profile. |
-| `--timeout seconds` | Per-model-request timeout; defaults to 180. |
+| `--timeout seconds` | Timeout for each HTTP attempt; defaults to 180. |
+| `--panel-timeout seconds` | Elapsed budget for each PR, issue or documentation panel; defaults to 900. Checked between actions. |
 | `--max-turns n` | Override each panel's turn budget. An incomplete panel cannot publish. |
 
 The API key and model also accept `--api-key` and `--llm-model`. Credentials
 are not written into session files. See `./code.sh --help` for all options.
+
+Failed model requests, including timeouts, retry up to twice after the initial
+attempt, with a fixed 30-second pause before each retry. At the default
+180-second HTTP timeout, one exhausted retry sequence can take ten minutes.
+Provider compatibility fallbacks can start another sequence. A persistent
+HTTP 400 can indicate a rejected request that waiting will not resolve.
+Retries preserve completed review turns and apply to PR, issue and documentation
+panels. `--panel-timeout` gives each panel a shared 15-minute budget for all its
+agents, tool followups, retries and fallbacks. This is cooperative: an in-flight
+HTTP attempt and remaining retry pauses can overrun the budget before it is
+checked. An exhausted budget or failed request stops the review without posting;
+a result returned after expiry is not accepted. There is no deadline for the
+entire CLI workflow, including source preparation.
+
+Ctrl+C terminates the CLI immediately, including during native HTTP calls and
+retry waits. Existing local review sources and partial transcripts are retained.
 
 Progress uses `[YYYY-MM-DD HH:MM:SS] [model] [agent] [phase]` on stderr,
 with local date and time. It identifies preparation, model waits, source reads,
 completed turns and final validation. For example:
 
 ```text
-[2026-09-07 15:30:00] [deepseek-v4-flash] [Lead] [review] waiting for model response...
-[2026-09-07 15:31:00] [deepseek-v4-flash] [Verifier] [verify] inspecting evidence...
+[2026-09-07 15:30:00] [deepseek-v4-flash] [Lead] [review] waiting for model response (request 1, attempt 1/3 (initial))...
+[2026-09-07 15:33:00] [deepseek-v4-flash] [Lead] [review] request 1: retry 1/2 in 30s...
+[2026-09-07 15:33:30] [deepseek-v4-flash] [Lead] [review] waiting for model response (request 1, attempt 2/3 (retry 1/2))...
+[2026-09-07 15:34:00] [deepseek-v4-flash] [Verifier] [verify] inspecting evidence...
 ```
 
 Documentation preparation reports `plan`, `draft`, `verify` and `summary`.
 Host steps use `Host` as the agent. Normal progress excludes conversation text;
 `--verbose` adds the complete agent and system exchanges.
-While work is running, a heartbeat reports the current activity and elapsed
-time every 15 seconds, including during slow Git, GitHub and model requests.
+While work is running, a heartbeat is scheduled every 15 seconds to report the
+current activity and elapsed time during Git, GitHub and model requests.
+Every HTTP attempt shows its logical request number, attempt number and whether
+it is the initial attempt or a retry. Compatibility fallbacks keep the request
+number and get a separate fallback number. Transport failures show a safe error
+category, elapsed time and the next retry pause. Compaction uses phase `compact`.
+
+Before each POST, progress measures the assembled prompt: message count, message
+JSON bytes by role, tool-schema count/bytes, total serialized payload JSON bytes,
+and a rough token estimate from message/schema JSON characters divided by four.
+These include accumulated source reads and tool results. JSON sizes use compact
+UTF-8 serialization, not HTTP headers or exact wire size. The token estimate is
+not a model tokenizer and may undercount code or non-English text. Numeric input
+token usage returned by the provider is logged separately after its response.
+These counts do not establish a model's context limit or prove a timeout's cause.
+The complete root guide is already in the topic; reviewers are instructed to
+reuse that copy and read relevant module documents and source through tools.
+
+An HTTP response is distinct from a completed review turn. Empty replies and
+decoding failures are checked inside kerness; their retries appear on the next
+attempt, without a transport-error pause notice. Measurements exclude contents,
+URLs and credentials and appear only on stderr, outside the report/transcript.
+Heartbeats show both the current activity's elapsed time and total time for the
+active step or panel, so evidence reads do not hide the total review duration.
+Native provider retry sleeps can delay heartbeat delivery.
 Successful steps show their total duration. This is enabled by default;
 `--verbose` adds the full discussion.
 

@@ -13,7 +13,7 @@ PRs merge only into isolated local review sources; the tool never merges a PR on
 
 Every repository is treated equally: `--repo` and `--branch` are required,
 the selected source snapshot is authoritative, and optional profiles only
-supplement it. No project-specific profile ships (`review.py:76`, `review.py:153`).
+supplement it. No project-specific profile ships (`review.py:77`, `review.py:158`).
 Linux and macOS with Python 3.10+ and Git 2.32+ are declared supported in
 `README.md:10`. Target tests, builds and scripts are never executed; this tool's
 own development tests are separate. Preflight fetches the latest eatmycode
@@ -49,7 +49,9 @@ and `agent_tools.py` collect inspection evidence through the I/O boundaries.
 Gameplans and personas define review contracts and expertise. Host code selects
 Lead, any requested Security/Dependencies consultants, then Verifier. All seven
 checks remain separate. It validates authenticated turns, result shape and
-independent assessments (`panel_runtime.py:166`).
+independent assessments (`panel_runtime.py:169`).
+`provider_io.py` observes actual HTTP attempts and assembled request sizes while
+leaving retries and compatibility fallbacks to kerness.
 The [Index](#index) routes subsystem changes and their interaction partners.
 
 Cross-cutting invariants:
@@ -62,23 +64,23 @@ Cross-cutting invariants:
 - Never execute target tests, builds or scripts. Panel gameplans expose no
   command, shell, write or memory-write tool.
 - Panel reads stay inside its source checkout, explicitly allowed generated
-  guide files and an optional caller-selected transcript (`session_builder.py:36`).
+  guide files and an optional caller-selected transcript (`session_builder.py:39`).
 - Generated documentation is validated before writes to retained local guide
   worktrees, with rollback on write failure. It is never pushed or committed.
 - Preserve managed working trees, local branch refs and durable agent guidance.
   Reject dirty clones; do not reset work or replace a different repository's clone
   (`git_io.py:62`, `git_io.py:83`).
 - Keep credentials in memory; disable kerness session persistence and exclude
-  credentials from topics, reports and transcripts (`session_builder.py:27`).
+  credentials from topics, reports and transcripts (`session_builder.py:28`).
 - Missing reviewers, malformed results, rejected documentation audits and invalid
-  citations stop publication (`panel_runtime.py:166`, `reporting.py:41`).
+  citations stop publication (`panel_runtime.py:169`, `reporting.py:41`).
 
 ## Runtime and Data Flow
 
 1. `code.sh` selects `.venv/bin/python` or legacy `venv/bin/python`, forwards
    arguments and preserves the caller's directory and process exit status.
-   `review.py:76` accepts `--id NUMBER` or legacy `auto|pr|issue NUMBER`.
-2. `review.py:423` validates options and credentials, identifies the PR/issue
+   `review.py:77` accepts `--id NUMBER` or legacy `auto|pr|issue NUMBER`.
+2. `review.py:430` validates options and credentials, identifies the PR/issue
    kind and rejects an explicit mismatch before source preparation. It fetches
    PR metadata when applicable, then checks the managed clone.
 3. Git prepares an isolated snapshot of the required `--branch`. Issues use
@@ -89,7 +91,7 @@ Cross-cutting invariants:
    versions and sizes at most 35,000 Unicode characters skip documentation
    preparation. Missing, invalid, older or oversized docs receive a local update
    in a separate retained guide worktree; newer docs are preserved without
-   downgrading (`git_io.py:109`, `review.py:310`).
+   downgrading (`git_io.py:109`, `review.py:315`).
 4. Lead reviews architecture and complete relevant source, optional consultants
    investigate focused questions, and Verifier accounts for every finding. Issues
    use one investigation and conditional verification. A missing or malformed
@@ -103,21 +105,33 @@ Cross-cutting invariants:
    with an explicit merge instruction and the approval reason or unmet requirements.
    PR citations refer to the local merge
    result and may differ from GitHub PR-head lines.
-5. `review.py:342` prints Markdown to stdout and posts through `gh` unless
+5. `review.py:347` prints Markdown to stdout and posts through `gh` unless
    `--dry-run`. PR metadata is checked again before publication. Progress and
    suggested labels go to stderr; errors and interruption return nonzero.
    The complete workflow runs without `--verbose` or a transcript; `--verbose`
    adds the panel discussion to stderr.
 
 CLI flags and `REVIEW_API_KEY`, `REVIEW_API_BASE`, `REVIEW_MODEL` configure the
-provider. `--timeout` limits each model request; calls are synchronous, with no
-whole-run deadline. Each active progress scope has a temporary thread that
-prints a heartbeat every 15 seconds and is stopped and joined on scope exit,
-including errors and interruption (`progress.py:22`). Panel status identifies
+provider. Model retry sequences allow two retries with 30-second pauses;
+`--timeout` limits each attempt. `--panel-timeout` defaults to a cooperative
+900-second budget shared by each panel's agents, tools, retries and fallbacks.
+It is checked between actions; active HTTP calls and remaining retry pauses can
+overrun it. Late results are rejected. There is no whole-CLI deadline
+(see [provider retries](ARCHITECTURE/harness.md#design-and-invariants)).
+The CLI uses the OS default SIGINT action so Ctrl+C immediately terminates native
+calls too (`review.py:470`); imported library calls retain the caller's handling.
+Each active progress scope schedules a heartbeat every 15 seconds. Its temporary
+thread is stopped and joined on normal or exceptional scope exit (`progress.py:22`);
+OS termination bypasses Python cleanup. Panel status identifies logical request counts,
 model waits, evidence inspection and completed review turns using
 `[YYYY-MM-DD HH:MM:SS] [model] [agent] [phase]`. Documentation phases follow
 the required specialist rotation; provider purpose identifies summary calls.
 Verbose mode adds agent and system exchanges; default output excludes them.
+Actual HTTP attempts label initial sends, retries and compatibility fallbacks.
+Each POST logs serialized prompt/payload sizes and a characters/4 token estimate;
+provider-reported input tokens appear separately. Measurements exclude contents
+and credentials and do not establish timeout cause (see [panels](ARCHITECTURE/harness.md)).
+Heartbeats include activity elapsed time and total step/panel duration.
 Optional transcripts are explicit files; session state is not persisted.
 Managed clones, isolated source repositories, guide worktrees and the upstream
 rule cache are retained across process exit. There is no service, database or
@@ -130,7 +144,7 @@ shutdown worker. See [workflow](ARCHITECTURE/review-cli.md) and
 | ---- | ------------------------------ |
 | `code.sh`, `review.py`, `progress.py`, `repo_facts.py` | Launcher, coordination, stderr activity/heartbeat and measured PR leads |
 | `architecture.py` | Specification refresh, audit and validated local documentation writes |
-| `panel_runtime.py`, `session_builder.py`, `agent_tools.py` | Panel execution, access policy and read-only tools |
+| `panel_runtime.py`, `session_builder.py`, `provider_io.py`, `agent_tools.py` | Panel execution, request observations, access policy and read-only tools |
 | `reporting.py` | Result validation and Markdown rendering |
 | `git_io.py`, `github_io.py` | Git transport, managed snapshots and GitHub CLI boundary |
 | `gameplans/`, `personas/`, `prompts/` | Panel contracts, specialist roles and optional review knowledge |
@@ -145,8 +159,8 @@ shutdown worker. See [workflow](ARCHITECTURE/review-cli.md) and
 Observed Python conventions are four-space indentation, `snake_case` functions,
 `UPPER_CASE` constants, standard-library imports before local imports, postponed
 annotations and typed boundaries. Reuse `Path`, dataclasses for fixed internal
-records, and dictionaries for model/CLI payloads (`panel_runtime.py:81`,
-`session_builder.py:36`, `reporting.py:226`). Annotations are not uniform or
+records, and dictionaries for model/CLI payloads (`panel_runtime.py:84`,
+`session_builder.py:39`, `reporting.py:226`). Annotations are not uniform or
 statically enforced; preserve the surrounding style rather than imposing a new
 checker. No formatter/linter/type-check command is configured.
 
@@ -155,7 +169,7 @@ raise domain errors; CLI coordination turns them into concise nonzero exits.
 Tool handlers return explicit unavailable-evidence text so the panel can record
 a gap (`agent_tools.py:101`). Runtime progress is flushed to stderr; stdout
 belongs to the final report. Tests use `unittest`, temporary directories, mocks and scripted
-kerness providers (`tests/test_workflow.py:47`). Add no top-level dependency
+kerness providers (`tests/test_workflow.py:52`). Add no top-level dependency
 without evidence that standard-library implementation is unreasonable.
 
 ## Verification and Review Map
@@ -420,7 +434,7 @@ inapplicability. Findings feed Write and Gate directly.
 | ------------- | ------------ | ---------------------------------- |
 | [Workflow and launcher](ARCHITECTURE/review-cli.md) | `review.py`, `code.sh`, `progress.py`, `repo_facts.py` | Routing, configuration, source/guide flow, shared progress and measured PR leads; read I/O, preflight and panel partners when changing coordination |
 | [Architecture preflight](ARCHITECTURE/architecture-preflight.md) | `architecture.py`, `gameplans/architecture_docs.md`, `personas/docs_*.md` | Upstream contract, freshness, source audit, document validation/migration and local writes; consult panel and Git contracts |
-| [Reviews, tools and verification](ARCHITECTURE/harness.md) | `panel_runtime.py`, `session_builder.py`, `agent_tools.py`, `gameplans/`, `personas/`, `patches/`, `requirements.txt` | Runtime, rosters, read boundaries, progress, strict completion and dependency integration; PR/issue gameplans and non-doc personas owned here; docs behavior belongs to preflight |
+| [Reviews, tools and verification](ARCHITECTURE/harness.md) | `panel_runtime.py`, `session_builder.py`, `provider_io.py`, `agent_tools.py`, `gameplans/`, `personas/`, `patches/`, `requirements.txt` | Runtime, rosters, read boundaries, request/progress observations, strict completion and dependency integration; PR/issue gameplans and non-doc personas owned here; docs behavior belongs to preflight |
 | [Report and approval policy](ARCHITECTURE/reporting.md) | `reporting.py` | Result/citation validation, approval eligibility and rendering; assessment changes also require runtime/CLI review |
 | [GitHub access](ARCHITECTURE/github-io.md) | `github_io.py` | Service reads, kind detection, permitted report writes and shared command restrictions; inspect Git/CLI callers |
 | [Git checkouts](ARCHITECTURE/git-io.md) | `git_io.py` | Origins, clean clones, isolated branch/merge sources, pinned diffs and guide worktrees; consult preflight/CLI source ownership |

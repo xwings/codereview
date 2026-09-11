@@ -122,6 +122,13 @@ source. A small change may have seven concise clean notes. Do not invent a defec
 or demand a convention the repository does not establish. Full relevant files,
 callers and existing alternatives can overturn an apparent problem in a diff.
 
+Plan the evidence reads around the changed files and their affected callers.
+Batch independent reads and searches in one response when possible. Reuse source
+already inspected; broaden the investigation only for a concrete unresolved
+question. Once all seven checks have enough evidence, return the RESULT record.
+Record unavailable evidence as a concern and hold when necessary; do not spend
+the turn repeatedly retrying unavailable evidence or surveying unrelated code.
+
 Confirmed findings name a location, concrete impact, appropriate severity and
 specific fix. Repeated occurrences of one problem are one finding. The host
 omits withdrawn findings, retains unresolved disputes as questions, and requires

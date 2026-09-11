@@ -42,9 +42,10 @@ def activity(label: str, *, model: str = "-", agent: str = "Host",
     def heartbeat() -> None:
         while not stopped.wait(interval):
             with lock:
-                elapsed = time.monotonic() - since
+                now = time.monotonic()
+                elapsed, total = now - since, now - started
                 try:
-                    emit(f"Still working: {current} ({elapsed:.0f}s elapsed)", **context)
+                    emit(f"Still working: {current} ({elapsed:.0f}s elapsed; {total:.0f}s total)", **context)
                 except OSError as exc:
                     errors.append(exc)
                     return

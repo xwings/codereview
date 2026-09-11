@@ -27,7 +27,7 @@ the authoritative target source or current architecture guide (M1–M2).
 Markdown profiles are read by Python. Follow the
 [root conventions](../ARCHITECTURE.md#coding-style-and-code-design) for source,
 and the observed need/severity vocabulary in `prompts/default/design.md`.
-`review.py:168` supplies fallback text. No Markdown formatter or profile schema
+`review.py:173` supplies fallback text. No Markdown formatter or profile schema
 checker is configured. Profiles carry supplementary prose only.
 
 ## Design and Invariants
@@ -38,16 +38,21 @@ defaults apply. Required `--branch` selects the reviewed branch; profiles cannot
 choose it. JSON branch pins and default-branch fallbacks were removed. Required
 rubric/style files fail clearly when absent. Profile text cannot bypass the
 host's approval or citation gates; repository-specific knowledge does not ship.
+The complete root architecture guide is inlined in review topics. The shared
+documentation context asks reviewers to reuse that copy and fetch relevant module
+documents; a separate generated guide still requires reading original source
+architecture. [Provider measurements](harness.md#design-and-invariants) report the
+assembled prompt and accumulated tool results without emitting their contents.
 
 ## Key Types and Entry Points
 
-- `review.py:153` — `resolve_profile`: explicit `--prompts`, then
+- `review.py:158` — `resolve_profile`: explicit `--prompts`, then
   `prompts/repos/<owner>/<name>`, then `prompts/default`.
-- `review.py:168` — `_read_prompt`: profile → default → shared root; required
+- `review.py:173` — `_read_prompt`: profile → default → shared root; required
   design/style files missing is an error.
-- `review.py:222` — `build_pr_topic`: prepared guide first, profile notes
+- `review.py:227` — `build_pr_topic`: prepared guide first, profile notes
   explicitly supplementary, then rubric/style/facts and the case.
-- `review.py:274` — `build_issue_topic`: architecture and source-backed triage;
+- `review.py:279` — `build_issue_topic`: architecture and source-backed triage;
   it does not apply the PR approval rubric to an issue.
 - `repo_facts.py:23` — `INDENT_LANGS`: measured languages match the shared style
   reference; other languages fall back to repository inspection.
@@ -75,7 +80,7 @@ python3 -m py_compile review.py
 Expected: tests pass, including required explicit branch selection, and compile
 exits zero. Source inspection establishes that no owner/name
 profile ships and topic builders place prepared architecture before supplementary
-notes (`review.py:222`, `review.py:274`); the suite does not assert that ordering.
+notes (`review.py:227`, `review.py:279`); the suite does not assert that ordering.
 
 ## Review and Refactor Guide
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import signal
 import sys
 from pathlib import Path
 
@@ -121,6 +122,10 @@ def parse_args() -> argparse.Namespace:
         help="per-request HTTP timeout in seconds (default: 180)",
     )
     ap.add_argument(
+        "--panel-timeout", type=int, default=900,
+        help="elapsed budget per panel, including retries and tools; checked between actions (default: 900 seconds)",
+    )
+    ap.add_argument(
         "--max-turns", type=int, default=None,
         help="override the gameplan's turn ceiling (default: the gameplan's own)",
     )
@@ -140,8 +145,8 @@ def parse_args() -> argparse.Namespace:
         ap.error("--api-key is required (or set $REVIEW_API_KEY)")
     if not args.llm_model:
         ap.error("--llm-model is required (or set $REVIEW_MODEL)")
-    if args.number < 1 or args.timeout < 1 or (args.max_turns is not None and args.max_turns < 1):
-        ap.error("number, timeout and max-turns must be positive")
+    if args.number < 1 or args.timeout < 1 or args.panel_timeout < 1 or (args.max_turns is not None and args.max_turns < 1):
+        ap.error("number, timeout, panel-timeout and max-turns must be positive")
     args.repo = normalize_repo(args.repo)
     try:
         args.branch = git_io.validate_branch(args.branch)
@@ -328,7 +333,7 @@ def prepare_docs(args: argparse.Namespace, provider, source: Path, skill, label:
             topic=topic, clone=workspace, provider=provider, model=args.llm_model,
             transcript=transcript, max_turns=args.max_turns, verbose=args.verbose,
         )
-        fields = panel_runtime.run_session(session, "docs").fields
+        fields = panel_runtime.run_session(session, "docs", timeout_s=args.panel_timeout).fields
         emit("Validating documentation proposals and saving local guide files...",
              model=args.llm_model, phase="architecture")
         return fields
@@ -373,7 +378,7 @@ def handle_pr(args: argparse.Namespace, provider, profile: Path, pr: dict,
             provider=provider, model=args.llm_model,
             transcript=args.transcript, max_turns=args.max_turns, verbose=args.verbose,
         )
-    result = panel_runtime.run_session(session, "pr", clone=source)
+    result = panel_runtime.run_session(session, "pr", clone=source, timeout_s=args.panel_timeout)
     fields = result.fields
     with activity("Validating PR citations, assessments and report", model=args.llm_model, phase="report"):
         verdict, reasons = reporting.validate_pr(fields, source, result.assessments, pr)
@@ -392,7 +397,9 @@ def documentation_context(workspace: Path, docs) -> str:
     return (
         f"Architecture guide: {workspace.resolve()}/ARCHITECTURE.md\n"
         f"Related module documents: {workspace.resolve()}/ARCHITECTURE/\n"
-        "Read the source checkout's original architecture files when present. "
+        "The complete guide ARCHITECTURE.md is included below; reuse that copy instead of "
+        "fetching the same guide again. Read relevant module documents through tools. "
+        "When the guide is separate, also read the source checkout's original architecture files when present. "
         "Every finding and final evidence citation must refer to an original file and line "
         "in the source checkout; generated documentation is not part of the submitted PR.\n\n"
         + docs.context()
@@ -411,7 +418,7 @@ def handle_issue(args: argparse.Namespace, provider, profile: Path,
             provider=provider, model=args.llm_model,
             transcript=args.transcript, max_turns=args.max_turns, verbose=args.verbose,
         )
-    result = panel_runtime.run_session(session, "issue", clone=source)
+    result = panel_runtime.run_session(session, "issue", clone=source, timeout_s=args.panel_timeout)
     with activity("Validating issue evidence and report", model=args.llm_model, phase="report"):
         body = scope + "\n\n" + reporting.render_issue(result.fields, source)
     if result.fields["labels"]:
@@ -460,12 +467,20 @@ def main() -> int:
     return handle_issue(args, provider, profile, snapshot, workspace, docs)
 
 
-if __name__ == "__main__":
+def cli() -> int:
+    """Keep terminal interrupts outside the native provider's retry handling."""
+    previous = signal.signal(signal.SIGINT, signal.SIG_DFL)
     try:
-        sys.exit(main())
+        return main()
     except (architecture.ArchitectureError, reporting.ReportError, panel_runtime.PanelError) as exc:
         sys.exit(f"error: {exc}. Nothing posted.")
     except (OSError, UnicodeError) as exc:
         sys.exit(f"error: {exc}. Review not completed.")
     except KeyboardInterrupt:
         sys.exit("Interrupted. Review not completed.")
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

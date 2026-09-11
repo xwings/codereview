@@ -12,6 +12,7 @@ import kerness
 
 import agent_tools
 from panel_runtime import PANELS, PanelChannel
+from provider_io import ObservedProvider, RETRIES, RETRY_INTERVAL_SECONDS
 
 ROOT = Path(__file__).resolve().parent
 GAMEPLANS = ROOT / "gameplans"
@@ -26,10 +27,12 @@ CHAIR = ("Chair", "maintainer_chair.md")
 
 def build_provider(api_key: str, api_base: str, timeout_s: int) -> kerness.CustomProvider:
     """Any OpenAI-compatible endpoint. The key is held in memory only."""
-    return kerness.CustomProvider(
+    return ObservedProvider(
         url=api_base,
         api_key=api_key,
         timeout_sec=timeout_s,
+        retries=RETRIES,
+        interval_sec=RETRY_INTERVAL_SECONDS,
     )
 
 

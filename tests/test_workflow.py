@@ -3,12 +3,16 @@
 import copy
 import io
 import json
+import signal
 import subprocess
+import sys
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -19,6 +23,7 @@ import git_io
 import github_io
 import panel_runtime
 import progress
+import provider_io
 import reporting
 import review
 import session_builder
@@ -152,6 +157,8 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(result.fields, fields)
                 self.assertEqual([m["sender"] for m in result.history if m["msg_type"] == "turn"], actors)
                 self.assertEqual(len(self.provider.calls), expected_calls)
+                self.assertIn(f"request {expected_calls}", err.getvalue())
+                self.assertIn("s total)", err.getvalue())
                 if kind == "pr":
                     self.assertEqual(result.assessments, self.assessments)
                     self.assertEqual(set(result.fields["checklist"]), set(reporting.CHECKS))
@@ -228,6 +235,210 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.build("pr", [], documentation=guide)
 
+    def test_provider_retries_failures_at_fixed_interval_before_failing_the_panel(self):
+        custom_provider = provider_io.ObservedProvider
+        errors = [
+            (kerness.ProviderNetworkError("PRIVATE_URL", TimeoutError("PRIVATE_CAUSE: timed out")),
+             "ProviderNetwork: request timed out"),
+            (kerness.ProviderHTTPError(400, "PRIVATE_URL", "PRIVATE_BODY"), "ProviderHttp HTTP 400"),
+            ({"choices": [{"message": {"content": ""}}]}, "ProviderEmpty"),
+        ]
+        scenarios = [(0, None, "")] + [(count, failure, diagnostic)
+            for failure, diagnostic in errors for count in (2, 3)]
+        docs = {"documents": {}, "audited": True, "summary": "Inspected source."}
+        cases = [("pr", self.fields, session_builder.build_pr_session, ["Lead", "Verifier"]),
+                 ("issue", issue_fields("bug"), session_builder.build_issue_session,
+                  ["Investigator", "Verifier"]),
+                 ("docs", docs, session_builder.build_docs_session,
+                  ["DocsPlanner", "DocsWriter", "DocsVerifier"] * 3)]
+        for kind, fields, builder, actors in cases:
+            replies = scripted_replies(kind, fields)
+            responses = [{"choices": [{"message": {"content": reply}}], "model": "offline-fixture"}
+                         for reply in replies]
+            for failures, failure, diagnostic in scenarios:
+                with self.subTest(kind=kind, failures=failures, diagnostic=diagnostic), ExitStack() as stack:
+                    out = stack.enter_context(redirect_stdout(io.StringIO()))
+                    err = stack.enter_context(redirect_stderr(io.StringIO()))
+                    # Keep the real provider and retry loop; remove only the waits.
+                    factory = stack.enter_context(patch.object(session_builder, "ObservedProvider", side_effect=lambda **kwargs:
+                        custom_provider(**(kwargs | {"backoff_sec": 0, "interval_sec": 0}))))
+                    post = stack.enter_context(patch("kerness.provider.http_post_json",
+                        side_effect=[responses[0], *([failure] * failures), *responses[1:]]))
+                    provider = session_builder.build_provider("PRIVATE_KEY", "https://example.invalid", 7)
+                    self.assertEqual(factory.call_args.kwargs.get("interval_sec"), 30)
+                    session = builder(topic="Inspect this checkout.", clone=self.clone, provider=provider,
+                                      model="offline-fixture", transcript=None, max_turns=None)
+                    if failures == 3:
+                        with self.assertRaisesRegex(panel_runtime.PanelError, diagnostic) as error:
+                            panel_runtime.run_session(session, kind, clone=self.clone)
+                        self.assertEqual(post.call_count, 4)
+                        self.assertNotIn("Done:", err.getvalue())
+                        for private in ("PRIVATE_URL", "PRIVATE_CAUSE", "PRIVATE_BODY", "PRIVATE_KEY"):
+                            self.assertNotIn(private, str(error.exception))
+                    else:
+                        result = panel_runtime.run_session(session, kind, clone=self.clone)
+                        self.assertEqual(post.call_count, len(replies) + failures)
+                        self.assertEqual([m["sender"] for m in result.history if m["msg_type"] == "turn"], actors)
+                        self.assertEqual(result.fields, fields | ({"verification": "independent"} if kind == "issue" else {}))
+                    self.assertEqual(out.getvalue(), "")
+                    self.assertEqual(err.getvalue().count("payload JSON="), post.call_count)
+                    if failures:
+                        self.assertIn("request 2, attempt 2/3 (retry 1/2)", err.getvalue())
+                        self.assertIn("request 2, attempt 3/3 (retry 2/2)", err.getvalue())
+                    for private in ("PRIVATE_URL", "PRIVATE_CAUSE", "PRIVATE_BODY", "PRIVATE_KEY"):
+                        self.assertNotIn(private, err.getvalue())
+                    self.assertTrue(all(call.kwargs["timeout"] == 7 for call in post.call_args_list))
+                    if failures:
+                        self.assertTrue(all(call == post.call_args_list[1] for call in post.call_args_list[1:4]))
+                    self.assertIs(kerness.provider.http_post_json, post)
+                    if failures and isinstance(failure, Exception):
+                        self.assertIn("retry 1/2 in 30s", err.getvalue())
+                        self.assertIn("retry 2/2 in 30s", err.getvalue())
+
+        # Compatibility fallbacks keep the logical request and reset its retry sequence.
+        for refusals in (("tools",), ("reasoning_effort",), ("tools", "reasoning_effort")):
+            responses = [{"choices": [{"message": {"content": reply}}]}
+                         for reply in scripted_replies("pr", self.fields)]
+            failures = [kerness.ProviderHTTPError(400, "PRIVATE_URL", f"PRIVATE_BODY: unsupported {name}")
+                        for name in refusals for _ in range(3)]
+            with self.subTest(fallbacks=refusals), redirect_stderr(io.StringIO()) as err, \
+                    patch("kerness.provider.http_post_json", side_effect=[*failures, *responses]) as post:
+                provider = custom_provider(url="https://example.invalid", api_key="PRIVATE_KEY",
+                                           retries=2, interval_sec=0, backoff_sec=0)
+                session = session_builder.build_pr_session(topic="Inspect this checkout.", clone=self.clone,
+                    provider=provider, model="offline-fixture", transcript=None, max_turns=None)
+                result = panel_runtime.run_session(session, "pr", clone=self.clone)
+                self.assertEqual(result.fields, self.fields)
+                self.assertEqual(post.call_count, len(failures) + len(responses))
+                for sequence in range(1, len(refusals) + 1):
+                    self.assertIn(f"request 1, fallback {sequence}, attempt 1/3 (initial)", err.getvalue())
+                self.assertIn("request 2, attempt 1/3 (initial)", err.getvalue())
+                self.assertNotIn("request 3", err.getvalue())
+                payload = post.call_args_list[-1].args[1]
+                for name in refusals:
+                    self.assertNotIn(name, payload)
+                self.assertIs(kerness.provider.http_post_json, post)
+                for private in ("PRIVATE_URL", "PRIVATE_BODY", "PRIVATE_KEY"):
+                    self.assertNotIn(private, err.getvalue())
+
+    def test_provider_measures_assembled_prompts_and_reports_usage_without_content(self):
+        # Exercise the native schema and tool-result payloads, not a parallel prompt builder.
+        secret = "PRIVATE_PROMPT_你好_🙂"
+        (self.clone / "app.py").write_text("def main():\n    return 1\n# " + secret + "\n")
+        tool_reply = {"choices": [{"message": {"content": "", "tool_calls": [{
+            "id": "read1", "type": "function", "function": {
+                "name": "read_file", "arguments": json.dumps({"path": str(self.clone / "app.py")}),
+            },
+        }]}}]}
+        final_reply = {"choices": [{"message": {"content": scripted_replies("issue", issue_fields())[0]}}]}
+        for usage, expected in (({"prompt_tokens": 123}, 123), ({"input_tokens": 456}, 456),
+                                ({"prompt_tokens": True}, None), ({"prompt_tokens": -1}, None),
+                                ({"prompt_tokens": "PRIVATE_USAGE"}, None), ({}, None)):
+            with self.subTest(usage=usage), redirect_stderr(io.StringIO()) as err, \
+                    redirect_stdout(io.StringIO()) as out, patch("kerness.provider.http_post_json",
+                        side_effect=[tool_reply, final_reply | {"usage": usage}]) as post:
+                provider = session_builder.build_provider("PRIVATE_KEY", "https://example.invalid", 7)
+                transcript = self.clone / "measured.txt"
+                session = session_builder.build_issue_session(topic=secret, clone=self.clone, provider=provider,
+                    model="offline-fixture", transcript=transcript, max_turns=None)
+                panel_runtime.run_session(session, "issue", clone=self.clone)
+                self.assertEqual(post.call_count, 2)
+                metrics = [line for line in err.getvalue().splitlines() if "payload JSON=" in line]
+                self.assertEqual(len(metrics), 2)
+                sizes = []
+                for call, line in zip(post.call_args_list, metrics):
+                    payload = call.args[1]
+                    serialized = lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                    messages, tools = serialized(payload["messages"]), serialized(payload["tools"])
+                    chars = len(messages) + len(tools)
+                    sizes.append(len(messages.encode("utf-8")))
+                    self.assertIn(f"{len(payload['messages'])} messages; {chars} prompt JSON chars", line)
+                    self.assertIn(f"(~{chars // 4} tokens, chars/4 estimate)", line)
+                    self.assertIn(f"messages JSON={sizes[-1]} B", line)
+                    self.assertIn(f"{len(payload['tools'])} tool schemas JSON={len(tools.encode('utf-8'))} B", line)
+                    self.assertIn(f"payload JSON={len(serialized(payload).encode('utf-8'))} B", line)
+                    self.assertGreater(sizes[-1], len(messages))
+                    for role in ("system", "user", "assistant", "tool"):
+                        size = sum(len(serialized(message).encode("utf-8")) for message in payload["messages"]
+                                   if message["role"] == role)
+                        if size:
+                            self.assertIn(f"{role}={size}", line)
+                self.assertGreater(sizes[1], sizes[0])
+                self.assertTrue(any(message["role"] == "tool" and secret in message["content"]
+                                    for message in post.call_args.args[1]["messages"]))
+                self.assertEqual("provider input tokens=" in err.getvalue(), expected is not None)
+                if expected is not None:
+                    self.assertIn(f"provider input tokens={expected}", err.getvalue())
+                for private in (secret, "PRIVATE_KEY", "PRIVATE_USAGE", "https://example.invalid"):
+                    self.assertNotIn(private, err.getvalue())
+                self.assertEqual(out.getvalue(), "")
+                self.assertNotIn("payload JSON=", transcript.read_text())
+                self.assertNotIn("provider input tokens=", transcript.read_text())
+                self.assertIs(kerness.provider.http_post_json, post)
+
+    def test_provider_observation_scopes_compaction_and_unrelated_threads(self):
+        messages = [{"role": "user", "content": "PRIVATE_MESSAGE"}]
+        response = {"choices": [{"message": {"content": "Fixture response."}}]}
+        plain = kerness.CustomProvider(url="https://example.invalid", api_key="PRIVATE_KEY", retries=0)
+        observed = session_builder.build_provider("PRIVATE_KEY", "https://example.invalid", 7)
+        failures = []
+
+        def unrelated():
+            try:
+                plain.chat_with_retries("unrelated", messages)
+            except BaseException as exc:
+                failures.append(exc)
+
+        def transport(url, payload, headers, *, timeout):
+            if payload["model"] == "observed":
+                worker = threading.Thread(target=unrelated)
+                worker.start()
+                worker.join(2)
+                self.assertFalse(worker.is_alive(), "Observer blocked an unrelated provider")
+            return response
+
+        with redirect_stderr(io.StringIO()) as err, \
+                patch("kerness.provider.http_post_json", side_effect=transport) as post:
+            models = {"Lead": "observed", "Chair": "summary", "Verifier": "observed"}
+            with progress.activity("Panel") as update, provider_io.observe_requests(update, models, "Chair") as panel:
+                panel.started("Lead", "review")
+                observed.chat_with_retries("observed", messages)
+                self.assertIs(kerness.provider.http_post_json, post)
+                observed.chat_with_retries("summary", messages, purpose="compaction")
+                panel.started("Verifier", "verify")
+                observed.chat_with_retries("observed", messages)
+                self.assertEqual(panel.number, 3)
+            self.assertFalse(failures)
+            self.assertEqual(post.call_count, 5)
+            self.assertEqual(err.getvalue().count("payload JSON="), 3)
+            self.assertIn("[summary] [Chair] [compact] request 2, attempt 1/3", err.getvalue())
+            self.assertIn("[observed] [Verifier] [verify] request 3, attempt 1/3", err.getvalue())
+            self.assertNotIn("unrelated", err.getvalue())
+            self.assertNotIn("PRIVATE_MESSAGE", err.getvalue())
+            self.assertIs(kerness.provider.http_post_json, post)
+            logged = err.getvalue()
+            observed.chat_with_retries("outside-panel", messages)
+            self.assertEqual(err.getvalue(), logged)
+
+        for marker in ("waiting for model response", "payload JSON=", "HTTP response received"):
+            error = OSError("stderr unavailable")
+
+            def broken_output(message, **context):
+                if marker in message:
+                    raise error
+
+            with self.subTest(broken_output=marker), \
+                    patch("kerness.provider.http_post_json", return_value=response) as post, \
+                    patch.object(provider_io, "emit", side_effect=broken_output), \
+                    provider_io.observe_requests(lambda *a, **k: None, {"Lead": "observed"}, "Lead") as panel:
+                panel.started("Lead", "review")
+                panel.update = broken_output
+                with self.assertRaises(OSError) as caught:
+                    observed.chat_with_retries("observed", messages)
+                self.assertIs(caught.exception, error)
+                self.assertEqual(post.call_count, 1, "Failed telemetry retried a successful model call")
+                self.assertIs(kerness.provider.http_post_json, post)
+
     def test_format_corrections_preserve_history_and_required_reviewers(self):
         lead = self.fields | {"specialists": {name: f"Check {name}." for name in ("Security", "Dependencies")}}
         consultant = {"findings": [], "questions": [], "summary": "Checked app.py:1."}
@@ -280,6 +491,27 @@ class WorkflowTests(unittest.TestCase):
                         panel_runtime.validate_panel(changed, kind, clone=self.clone)
 
     def test_incomplete_or_malformed_results_never_become_a_review(self):
+        for kind, fields in (("pr", self.fields), ("issue", issue_fields()),
+                             ("docs", {"documents": {}, "audited": True, "summary": "Checked."})):
+            for replies in (scripted_replies(kind, fields),
+                            ['```tool_calls\n[{"name":"read_file","arguments":{"path":"app.py"}}]\n```']):
+                session = self.build(kind, replies)
+                original_chat = self.provider.chat_with_retries
+
+                def delayed_chat(*args, **kwargs):
+                    if len(self.provider.calls) == len(replies) - 1:
+                        time.sleep(0.2)
+                    return original_chat(*args, **kwargs)
+
+                with self.subTest(elapsed=kind, replies=replies), redirect_stderr(io.StringIO()) as err, \
+                        redirect_stdout(io.StringIO()) as out, \
+                        patch.object(self.provider, "chat_with_retries", delayed_chat), \
+                        self.assertRaisesRegex(panel_runtime.PanelError, "panel time budget exhausted"):
+                    panel_runtime.run_session(session, kind, clone=self.clone, timeout_s=0.1)
+                self.assertEqual(len(self.provider.calls), len(replies))
+                self.assertNotIn("inspecting evidence", err.getvalue())
+                self.assertNotIn("Done:", err.getvalue())
+                self.assertEqual(out.getvalue(), "")
         lead = self.fields | {"specialists": {}}
         malformed = ["", "END_REVIEW", "RESULT {}", "RESULT []", "RESULT broken",
                      record(lead) + "\n" + record(lead), record(lead) + "\nextra text",
@@ -558,7 +790,8 @@ class WorkflowTests(unittest.TestCase):
                         self.assertTrue(err.flushed.wait(2), "No flushed heartbeat while work is blocked")
                         for text in ("Waiting for repository fetch...", "Still working: Waiting for repository fetch"):
                             self.assertIn(f"[fixture-model] [Lead] [review] {text}", err.getvalue())
-                        self.assertIn("elapsed)", err.getvalue())
+                        self.assertIn("s elapsed;", err.getvalue())
+                        self.assertIn("s total)", err.getvalue())
                         if error is not None:
                             raise error
                 except BaseException as exc:
@@ -567,6 +800,63 @@ class WorkflowTests(unittest.TestCase):
                 self.assertFalse(any(t.name == "review-progress" for t in threading.enumerate()))
                 self.assertEqual("Done: Checking source" in err.getvalue(), error is None)
                 self.assertEqual(out.getvalue(), "")
+
+    def test_cli_interrupt_stops_native_request_and_retry_wait(self):
+        for phase in ("request", "retry"):
+            received, release = threading.Event(), threading.Event()
+
+            class Handler(BaseHTTPRequestHandler):
+                def do_POST(self):
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                    if phase == "retry":
+                        self.send_response(503)
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                    received.set()
+                    release.wait(5)
+                    self.close_connection = True
+
+                def log_message(self, *args):
+                    pass
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            script = """
+import sys
+import review
+import session_builder
+
+def blocked():
+    provider = session_builder.build_provider("offline-fixture", sys.argv[1], 180)
+    provider.chat_with_retries("fixture", [{"role": "user", "content": "Fixture request."}])
+    print("Unexpected completion", flush=True)
+
+review.main = blocked
+review.cli()
+"""
+            process = subprocess.Popen(
+                [sys.executable, "-c", script, f"http://127.0.0.1:{server.server_port}/v1"],
+                cwd=review.ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            try:
+                with self.subTest(phase=phase):
+                    self.assertTrue(received.wait(5), "Native request never reached the fixture server")
+                    if phase == "retry":
+                        time.sleep(0.1)
+                    process.send_signal(signal.SIGINT)
+                    out, err = process.communicate(timeout=3)
+                    self.assertEqual(process.returncode, -signal.SIGINT)
+                    self.assertEqual(out, "")
+                    self.assertNotIn("Unexpected completion", err)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate()
+                release.set()
+                server.shutdown()
+                server.server_close()
+                worker.join()
 
     def test_kind_detection_confirms_a_successful_resource_lookup(self):
         def response(code, url="", error="not found"):
@@ -581,7 +871,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_prepare_docs_skips_preparation_only_for_a_current_document_set(self):
         args = SimpleNamespace(workdir=self.clone, transcript=None, llm_model="fixture",
-                               max_turns=None, verbose=False)
+                               max_turns=None, verbose=False, panel_timeout=123)
         workspace = self.clone / "guide"
         skill = review.architecture.Skill("abc123", "Synthetic upstream specification", {}, "9.8.7")
         documents = {"ARCHITECTURE.md": "Architecture guidance", "ARCHITECTURE/command.md": "Command guidance"}
@@ -634,7 +924,7 @@ class WorkflowTests(unittest.TestCase):
                     worktree.assert_called_once_with(self.clone, args.workdir, "baseline")
                     self.assertEqual(builder.call_args.kwargs["clone"], workspace)
                     self.assertEqual(builder.call_args.kwargs["topic"], "Audit topic")
-                    run.assert_called_once_with(builder.return_value, "docs")
+                    run.assert_called_once_with(builder.return_value, "docs", timeout_s=123)
                 else:
                     self.assertEqual(actual_report.documents, {"ARCHITECTURE.md": root.read_text(),
                         "ARCHITECTURE/command.md": module.read_text(), "ARCHITECTURE/details/return.md": nested.read_text()})
@@ -647,6 +937,10 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual("source-audited" in context, audited)
                 self.assertEqual("preparation and source audit were skipped" in context, not audited)
                 self.assertIn("complete related source", context)
+                self.assertIn("reuse that copy instead of fetching the same guide again", context)
+                self.assertIn("Read relevant module documents through tools", context)
+                self.assertIn("When the guide is separate, also read the source checkout's original", context)
+                self.assertIn(actual_report.documents["ARCHITECTURE.md"], context)
                 self.assertIn("NOT executed", context)
                 self.assertIn("original file and line", context)
                 self.assertNotIn("These documents are local guidance, separate", context)
@@ -734,7 +1028,7 @@ class WorkflowTests(unittest.TestCase):
                 args = SimpleNamespace(repo="a/b", prompts=None, kind="auto", number=1, api_key="fake",
                                        api_base="https://example.invalid", timeout=1, workdir=self.clone,
                                        branch="release/selected", llm_model="fixture", transcript=None,
-                                       max_turns=None, verbose=False, allow_approve=False)
+                                       max_turns=None, verbose=False, allow_approve=False, panel_timeout=123)
                 (source / "ARCHITECTURE.md").write_text(
                     f"---\neatmycode_version: {skill.version}\n---\nOriginal guide.\n" if current_root else "Old guide.\n")
                 snapshot = git_io.Source(source, "b" * 40, "c" * 40, "merged diff" if kind == "pr" else "")
@@ -832,7 +1126,7 @@ class WorkflowTests(unittest.TestCase):
               "state": "OPEN", "isDraft": False}
         args = SimpleNamespace(repo="a/b", number=1, branch="release/selected", workdir=self.clone,
                                llm_model="fixture", transcript=None, max_turns=None,
-                               verbose=False, allow_approve=True)
+                               verbose=False, allow_approve=True, panel_timeout=123)
         snapshot = git_io.Source(self.clone, "b" * 40, "c" * 40, "selected branch to local merge")
         fields = pr_fields()
         fields["findings"] = [{"severity": "major", "file": "ARCHITECTURE.md", "line": 1,
@@ -933,6 +1227,15 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(args.branch, "release/selected")
                 self.assertFalse(args.verbose)
                 self.assertIsNone(args.transcript)
+                self.assertEqual(args.panel_timeout, 900)
+        with patch("sys.argv", ["review.py", "--id", "42", *options, "--panel-timeout", "120"]):
+            self.assertEqual(review.parse_args().panel_timeout, 120)
+        for value in ("0", "-1", "invalid"):
+            with self.subTest(panel_timeout=value), \
+                    patch("sys.argv", ["review.py", "--id", "42", *options, "--panel-timeout", value]), \
+                    redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                review.parse_args()
+            self.assertEqual(error.exception.code, 2)
         forwarded = ["--id", "42", "--repo", "old/project", "--dry-run",
                      "--api-base", "https://server", *options, "--dry-run"]
         with patch("sys.argv", ["review.py", *forwarded]):

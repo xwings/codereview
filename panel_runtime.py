@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import kerness
 
 import reporting
 from progress import activity, emit
+from provider_io import observe_requests
 
 PANELS = {
     "pr": (
@@ -27,6 +29,7 @@ PANELS = {
     ),
 }
 PHASES = {"docs": ("plan", "draft", "verify")}
+PANEL_TIMEOUT_MESSAGE = "panel time budget exhausted (--panel-timeout); review incomplete"
 
 
 class PanelError(RuntimeError):
@@ -214,6 +217,8 @@ def _drain(run, step: dict) -> dict:
 def _failure(outcome: dict) -> str:
     """Describe engine failure without echoing provider URLs or response text."""
     reason = outcome["reason"]["kind"]
+    if reason == "budget_exceeded" and outcome["reason"].get("budget") == "elapsed":
+        return PANEL_TIMEOUT_MESSAGE
     error = outcome.get("error") or {}
     detail = next(iter(error), outcome["result"]["end_reason"])
     if detail == "ProviderHttp":
@@ -301,7 +306,8 @@ def _review_steps(run, kind: str, clone: Path, committed: list[dict], update) ->
     return _assemble_turns(committed, kind, clone)
 
 
-def run_session(session: kerness.Session, kind: str, clone: Path | None = None) -> PanelResult:
+def run_session(session: kerness.Session, kind: str, clone: Path | None = None,
+                *, timeout_s: float = 900) -> PanelResult:
     """Run bounded PR/issue steps or the unchanged automatic documentation panel."""
     if kind not in PANELS:
         raise ValueError(f"Unknown panel kind: {kind}")
@@ -315,7 +321,10 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None) 
     completed = 0
     phase = _phase(kind, "Host", completed)
     committed = []
-    with activity(f"{label} ({detail})", model=model, phase=phase) as update:
+    started = time.monotonic()
+    summarizer = "Chair" if kind == "docs" else PANELS[kind][0][0]
+    with activity(f"{label} ({detail}; {timeout_s:g}s budget)", model=model, phase=phase) as update, \
+            observe_requests(update, models, summarizer) as provider_progress:
         def on_event(record: dict) -> None:
             nonlocal completed, phase
             event = record["event"]
@@ -328,7 +337,7 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None) 
                              _phase(kind, actor, completed))
                 else:
                     phase = _phase(kind, actor, completed)
-                update("waiting for model response", model=models[actor], agent=actor, phase=phase)
+                provider_progress.started(actor, phase)
             elif event["kind"] == "tool_started":
                 actor = event["identity"]["actor"]
                 update("inspecting evidence", model=models[actor], agent=actor, phase=phase)
@@ -344,6 +353,7 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None) 
             run = session.start(
                 mode="automatic" if kind == "docs" else "host_driven",
                 result_validation="strict", event_sink=on_event,
+                budget={"max_elapsed_ms": int(timeout_s * 1000)},
             )
             assessments = []
             if kind == "docs":
@@ -353,6 +363,8 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None) 
                 step = _drain(run, run.step({"kind": "finish", "result": fields}))
         except kerness.SessionError as exc:
             raise PanelError(f"{label} could not complete: {exc}") from exc
+        if time.monotonic() - started >= timeout_s:
+            raise PanelError(PANEL_TIMEOUT_MESSAGE)
         if step["status"] != "finished":
             raise PanelError("The read-only panel unexpectedly requested external input.")
         outcome = step["outcome"]
