@@ -27,6 +27,7 @@ import provider_io
 import reporting
 import review
 import session_builder
+from tests.test_architecture import fixture_documents, fixture_skill
 
 
 def pr_fields():
@@ -173,6 +174,10 @@ class WorkflowTests(unittest.TestCase):
                                    "Trace control flow and failure handling", "benefit relative to API growth",
                                    "license obligations, install-time behavior", "Map affected trust boundaries"):
                         self.assertIn(" ".join(detail.split()), " ".join(lead_system.split()))
+                    for instructions in (lead_system, verifier_system):
+                        self.assertIn("AGENT_RULES.md", instructions)
+                        self.assertIn("Task Index", instructions)
+                        self.assertIn("Read when", instructions)
                     self.assertIn("A clean initial review still needs", verifier_system)
                     self.assertIn("independently confirm its input, code path", verifier_system)
                     verifier_context = str(self.provider.calls[-1])
@@ -185,6 +190,8 @@ class WorkflowTests(unittest.TestCase):
                         instructions = "\n".join(m["content"] for m in call if m["role"] == "system")
                         self.assertIn("RESULT {JSON}", instructions)
                         self.assertIn("boolean `verify`", instructions)
+                        self.assertIn("AGENT_RULES.md", instructions)
+                        self.assertIn("Task Index", instructions)
                 if kind != "docs":
                     self.assertEqual(result.end_reason, "host_finished")
                     self.assertNotIn("Chair", actors)
@@ -212,12 +219,12 @@ class WorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             guide = Path(directory)
             (guide / "ARCHITECTURE.md").write_text("ALLOWED_GUIDE_SENTINEL")
-            (guide / "ARCHITECTURE/details").mkdir(parents=True)
-            (guide / "ARCHITECTURE/details/return.md").write_text("NESTED_GUIDE_SENTINEL")
+            (guide / "ARCHITECTURE/topics").mkdir(parents=True)
+            (guide / "ARCHITECTURE/topics/return.md").write_text("NESTED_GUIDE_SENTINEL")
             (guide / "private.py").write_text("FORBIDDEN_SOURCE_SENTINEL")
             (self.clone / "escape.py").symlink_to(guide / "private.py")
             attempts = [{"name": "read_file", "arguments": {"path": str(path)}} for path in
-                        (guide / "ARCHITECTURE.md", guide / "ARCHITECTURE/details/return.md",
+                        (guide / "ARCHITECTURE.md", guide / "ARCHITECTURE/topics/return.md",
                          guide / "private.py", self.clone / "escape.py")]
             attempts += [{"name": "cmd", "arguments": {"command": "unavailable-command"}},
                          {"name": "write_file", "arguments": {"path": "app.py", "content": "CHANGED"}}]
@@ -231,9 +238,42 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("return 1", (self.clone / "app.py").read_text())
             self.assertEqual(context.lower().count("which is outside the workspace"), 2)
             self.assertIn("unknown tool", context.lower())
-            (guide / "ARCHITECTURE/details/escape.md").symlink_to(self.clone / "app.py")
+            (guide / "ARCHITECTURE/topics/escape.md").symlink_to(self.clone / "app.py")
             with self.assertRaises(ValueError):
                 self.build("pr", [], documentation=guide)
+
+        # Documentation planning sees bounded metadata pages, never file bodies.
+        directory = self.clone / "ARCHITECTURE/topics"
+        directory.mkdir(parents=True)
+        for index in range(45):
+            (directory / f"part-{index:02d}.md").write_text(
+                "---\neatmycode_version: 9.8.7\n---\nINVENTORY_BODY_SENTINEL界\n")
+        inventory = next(handler for name, _, _, handler in session_builder.agent_tools.docs_tools(self.clone)
+                         if name == "architecture_inventory")
+        first = json.loads(inventory({}))
+        second = json.loads(inventory({"offset": first["next_offset"]}))
+        self.assertEqual((len(first["files"]), len(second["files"])), (40, 5))
+        self.assertEqual(first["total_files"], 45)
+        self.assertIsNone(second["next_offset"])
+        self.assertEqual(len({entry["path"] for entry in first["files"] + second["files"]}), 45)
+        self.assertTrue(all(entry["kind"] == "topics" and entry["version"] == "9.8.7"
+                            for entry in first["files"] + second["files"]))
+        self.assertNotIn("INVENTORY_BODY_SENTINEL", json.dumps(first))
+        for invalid in (-1, True, "0"):
+            self.assertIn("error:", inventory({"offset": invalid}))
+        escaped = directory / "escape.md"
+        escaped.symlink_to(self.clone / "app.py")
+        self.assertIn("metadata unavailable", inventory({}))
+        escaped.unlink()
+        for tools in (session_builder.agent_tools.pr_tools(self.clone), session_builder.agent_tools.issue_tools(self.clone)):
+            self.assertNotIn("architecture_inventory", [name for name, *_ in tools])
+        docs = {"documents": {}, "audited": True, "summary": "Inspected source."}
+        replies = scripted_replies("docs", docs)
+        replies.insert(1, '```tool_calls\n[{"name":"architecture_inventory","arguments":{}}]\n```')
+        with redirect_stderr(io.StringIO()):
+            panel_runtime.run_session(self.build("docs", replies), "docs")
+        self.assertIn('"next_offset": 40', str(self.provider.calls[2]))
+        self.assertNotIn("INVENTORY_BODY_SENTINEL", str(self.provider.calls))
 
     def test_provider_retries_failures_at_fixed_interval_before_failing_the_panel(self):
         custom_provider = provider_io.ObservedProvider
@@ -873,28 +913,33 @@ review.cli()
         args = SimpleNamespace(workdir=self.clone, transcript=None, llm_model="fixture",
                                max_turns=None, verbose=False, panel_timeout=123)
         workspace = self.clone / "guide"
-        skill = review.architecture.Skill("abc123", "Synthetic upstream specification", {}, "9.8.7")
-        documents = {"ARCHITECTURE.md": "Architecture guidance", "ARCHITECTURE/command.md": "Command guidance"}
-        module = self.clone / "ARCHITECTURE/command.md"
-        nested = self.clone / "ARCHITECTURE/details/return.md"
-        nested.parent.mkdir(parents=True)
-        cases = [(version, skill.version, skill.version) for version in (skill.version, "missing", None, "invalid", "1.0.0")]
-        cases += [(skill.version, "1.0.0", skill.version), (skill.version, "missing", "missing"),
-                  (skill.version, skill.version, "1.0.0"), (skill.version, skill.version, "oversized")]
-        for version, module_version, nested_version in cases:
-            for path, stamp in ((module, module_version), (nested, nested_version)):
-                path.unlink(missing_ok=True)
+        skill = fixture_skill()
+        documents = fixture_documents(skill)
+        module_name = "ARCHITECTURE/modules/command.md"
+        rules_name = review.architecture.RULES_PATH
+        cases = [(None, None)]
+        for name in documents:
+            cases.extend((name, state) for state in ("missing", None, "invalid", "1.0.0", "oversized"))
+        for name, stamp in cases:
+            for path, content in documents.items():
+                target = self.clone / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content)
+            if name is not None:
+                target = self.clone / name
+                target.unlink()
                 if stamp != "missing":
-                    content = f"---\neatmycode_version: {stamp if stamp != 'oversized' else skill.version}\n---\nGuidance"
-                    path.write_text(content + ("x" * 35_001 if stamp == "oversized" else ""))
-            root = self.clone / "ARCHITECTURE.md"
-            root.unlink(missing_ok=True)
-            if version != "missing":
-                root.write_text("Architecture guidance" if version is None else
-                                f"---\neatmycode_version: {version}\n---\nArchitecture guidance")
-            audited = (version, module_version, nested_version) != (skill.version, skill.version, skill.version)
+                    content = documents[name]
+                    if stamp is None:
+                        content = content.split("---\n", 2)[-1]
+                    elif stamp == "oversized":
+                        content += "x" * 12_001
+                    else:
+                        content = content.replace(skill.version, stamp, 1)
+                    target.write_text(content)
+            audited = name is not None
             report = review.architecture.Report(skill.revision, (), documents, "Source inspected.")
-            with self.subTest(versions=(version, module_version, nested_version)), ExitStack() as stack:
+            with self.subTest(path=name, state=stamp), ExitStack() as stack:
                 err = stack.enter_context(redirect_stderr(io.StringIO()))
                 out = stack.enter_context(redirect_stdout(io.StringIO()))
                 worktree = stack.enter_context(patch.object(git_io, "review_workspace", return_value=workspace))
@@ -906,7 +951,7 @@ review.cli()
                 def prepare(clone, active_skill, generate):
                     self.assertEqual(clone, workspace)
                     self.assertIs(active_skill, skill)
-                    self.assertIn("Checking baseline architecture versions and sizes", err.getvalue())
+                    self.assertIn("Checking baseline architecture", err.getvalue())
                     self.assertNotIn("Auditing baseline architecture", err.getvalue())
                     self.assertEqual(generate("Audit topic"), fields)
                     return report
@@ -926,8 +971,7 @@ review.cli()
                     self.assertEqual(builder.call_args.kwargs["topic"], "Audit topic")
                     run.assert_called_once_with(builder.return_value, "docs", timeout_s=123)
                 else:
-                    self.assertEqual(actual_report.documents, {"ARCHITECTURE.md": root.read_text(),
-                        "ARCHITECTURE/command.md": module.read_text(), "ARCHITECTURE/details/return.md": nested.read_text()})
+                    self.assertEqual(actual_report.documents, documents)
                     self.assertNotIn("documentation workspace", err.getvalue())
                 self.assertEqual("Auditing baseline architecture against source" in err.getvalue(), audited)
                 self.assertEqual("skipping documentation preparation" in err.getvalue(), not audited)
@@ -936,22 +980,27 @@ review.cli()
                 context = review.documentation_context(actual_workspace, actual_report)
                 self.assertEqual("source-audited" in context, audited)
                 self.assertEqual("preparation and source audit were skipped" in context, not audited)
-                self.assertIn("complete related source", context)
-                self.assertIn("reuse that copy instead of fetching the same guide again", context)
-                self.assertIn("Read relevant module documents through tools", context)
-                self.assertIn("When the guide is separate, also read the source checkout's original", context)
-                self.assertIn(actual_report.documents["ARCHITECTURE.md"], context)
+                self.assertIn("Task Index", context)
+                self.assertIn("Read when", context)
                 self.assertIn("NOT executed", context)
                 self.assertIn("original file and line", context)
-                self.assertNotIn("These documents are local guidance, separate", context)
+                self.assertEqual(context.count(documents["ARCHITECTURE.md"]), 1)
+                self.assertEqual(context.count(documents[rules_name]), 1)
+                self.assertNotIn(documents[module_name], context)
+                self.assertNotIn("also read the source checkout's original architecture files when present", context)
+                expanded = review.architecture.Report(
+                    actual_report.revision, (), documents | {
+                        f"ARCHITECTURE/modules/unrelated-{index}.md": "UNRELATED_BODY_SENTINEL" for index in range(100)
+                    }, actual_report.summary, audited=audited)
+                self.assertEqual(review.documentation_context(actual_workspace, expanded), context)
 
     def test_default_cli_completes_without_verbose_or_transcript(self):
-        skill = review.architecture.Skill("abc123", "Synthetic specification", {}, "9.8.7")
-        (self.clone / "ARCHITECTURE.md").write_text(
-            f"---\neatmycode_version: {skill.version}\n---\nSource guide.\n")
-        (self.clone / "ARCHITECTURE").mkdir()
-        (self.clone / "ARCHITECTURE/command.md").write_text(
-            f"---\neatmycode_version: {skill.version}\n---\nCommand guide.\n")
+        skill = fixture_skill()
+        documents = fixture_documents(skill)
+        for name, content in documents.items():
+            path = self.clone / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
         snapshot = git_io.Source(self.clone, "b" * 40, "c" * 40, "")
         pr = self.pr | {"number": 1, "headRefOid": "a" * 40, "baseRefName": "main"}
         formats = {
@@ -1008,19 +1057,23 @@ review.cli()
                 self.assertNotIn("RESULT ", report)
                 self.assertEqual(len(provider.calls), len(replies))
                 self.assertEqual({p.relative_to(self.clone).as_posix() for p in self.clone.rglob("*")},
-                                 {"app.py", "ARCHITECTURE.md", "ARCHITECTURE", "ARCHITECTURE/command.md"})
+                                 {"app.py", "ARCHITECTURE.md", "ARCHITECTURE", "ARCHITECTURE/AGENT_RULES.md",
+                                  "ARCHITECTURE/modules", "ARCHITECTURE/modules/command.md"})
                 if verbose:
                     self.assertEqual(report, default_report)
                 else:
                     default_report = report
 
     def test_kind_and_selected_source_precede_one_documentation_gate(self):
-        skill = review.architecture.Skill("abc123", "Synthetic upstream specification", {}, "9.8.7")
+        skill = fixture_skill()
         source, guide = self.clone / "source", self.clone / "guide"
         source.mkdir()
         (source / "app.py").write_bytes((self.clone / "app.py").read_bytes())
-        (source / "ARCHITECTURE").mkdir()
-        (source / "ARCHITECTURE/command.md").write_text(f"---\neatmycode_version: {skill.version}\n---\nCommand guide.\n")
+        documents = fixture_documents(skill)
+        for name, content in documents.items():
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
         actual_prepare_docs = review.prepare_docs
         for kind in ("issue", "pr"):
             for current_root in (False, True):
@@ -1030,11 +1083,11 @@ review.cli()
                                        branch="release/selected", llm_model="fixture", transcript=None,
                                        max_turns=None, verbose=False, allow_approve=False, panel_timeout=123)
                 (source / "ARCHITECTURE.md").write_text(
-                    f"---\neatmycode_version: {skill.version}\n---\nOriginal guide.\n" if current_root else "Old guide.\n")
+                    documents["ARCHITECTURE.md"].replace("Return a value", "Original guide. Return a value") if current_root else "Old guide.\n")
                 snapshot = git_io.Source(source, "b" * 40, "c" * 40, "merged diff" if kind == "pr" else "")
                 pr = {"number": 1, "headRefOid": "a" * 40, "baseRefName": "main",
                       "state": "OPEN", "isDraft": False}
-                docs = review.architecture.Report("abc123", (), {"ARCHITECTURE.md": "Generated guide."}, "Checked.")
+                docs = review.architecture.Report("abc123", (), documents | {"ARCHITECTURE.md": "Generated guide."}, "Checked.")
 
                 def prepare_source(clone, workdir, branch, **kwargs):
                     events.append("source")

@@ -1,33 +1,21 @@
 # No supplementary architecture profile
 
-No curated profile notes were supplied. The topic already identifies a current
-eatmycode architecture guide prepared from this checkout. Read that guide, the
-original project architecture when present, the owning module documents and
-complete related source during `study_repo` before assessing the case.
+No curated profile was supplied. Use the prepared guide's small root and
+mandatory Agent Rules already in the topic. Match changed source/test/config
+paths, or issue symbols and symptoms, to Task Index routes. Follow only matching
+index branches, owners and Read when triggers. Read partner pages only when a
+contract, shared state, data flow or test crosses that boundary.
 
-**Do not invent a structure.** Confirm documentation against the original
-source. Generated guides are local references, not changes submitted by the PR.
+Reuse unchanged pages already in context. Never load the entire architecture
+directory or repeat agent aliases of the root. If ownership is unclear, search
+source and route tables before expanding the investigation. Work through broad
+changes in bounded owner batches, retaining cross-owner constraints.
 
-In your own area only, and using `list_dir`, `read_file` and `repo_grep`:
+Check guidance against full relevant source, configuration and tests. Inspect
+applicable scoped instructions, manifests and tooling where they affect the
+review. A missing convention limits what may be demanded; it is not itself a
+code defect. Record unavailable evidence plainly. Generated guides are local
+references, so findings cite original source files and lines.
 
-- Read the top-level `README`, and any `CONTRIBUTING`, `ARCHITECTURE`,
-  `CLAUDE.md`/`AGENT.md`, or `docs/` file that describes intent. A project that
-  states its own rules outranks anything you would infer.
-- List the top level and the top two levels of the main source directory. Name
-  the modules and what each appears to own.
-- Find the public entry point — the package `__init__`, the exported surface,
-  the CLI, the main header. What a caller outside the project can touch is what
-  a change can break.
-- Read the dependency manifest (`requirements.txt`, `pyproject.toml`,
-  `package.json`, `Cargo.toml`, `go.mod`, …). It tells you what the project has
-  already decided to depend on, which is the baseline for check 6.
-- Look at the linter/formatter/CI configuration. What CI already enforces, you
-  do not need to.
-
-Report what you found as concrete observations with file paths, and say plainly
-where you could not establish a baseline. An area with no settled convention is
-itself a finding, and it limits what you may demand of this pull request: you
-cannot hold a contributor to a rule that nothing in the tree demonstrates.
-
-Optional curated notes belong in `prompts/repos/<owner>/<name>/ARCHITECTURE.md`.
-They supplement the prepared guide and source; they do not replace preflight.
+Optional notes in `prompts/repos/<owner>/<name>/ARCHITECTURE.md` supplement the
+prepared guide and authoritative source; they do not replace preflight.

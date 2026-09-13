@@ -22,8 +22,9 @@ backstops the rest. Creating a directory here needs no Python change.
 - **`ARCHITECTURE.md`** — layering, module ownership, the public API surface,
   the invariants a contributor is expected to know. These are supplementary
   notes; the prepared guide and selected or merged source take precedence.
-  Only the selected source's root version controls documentation preparation;
-  profile notes cannot bypass that gate.
+  The selected source's entire architecture set must pass version, layout,
+  size and navigation checks; profile notes cannot bypass preparation. Keep
+  notes concise so they do not undo the prepared guide's task-based reading.
 - **`design.md`** — what *this* maintainer considers a blocker. It must define
   the severity vocabulary and the approve threshold; `../default/design.md`
   is the template. `reporting.validate_pr` always enforces unanimous merge
@@ -45,4 +46,4 @@ visible in the tree; it does not legislate. A convention the panel cannot point
 at a file for is not a convention, and nothing may be demanded on its
 authority.
 
-See [ARCHITECTURE/prompts.md](../../ARCHITECTURE/prompts.md).
+See [ARCHITECTURE/modules/prompts.md](../../ARCHITECTURE/modules/prompts.md).

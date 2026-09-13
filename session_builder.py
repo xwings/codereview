@@ -118,4 +118,4 @@ def build_issue_session(**kwargs) -> kerness.Session:
 
 def build_docs_session(**kwargs) -> kerness.Session:
     clone = kwargs["clone"]
-    return _build("docs", "architecture_docs.md", DOCS_PANEL, agent_tools.issue_tools(clone), **kwargs)
+    return _build("docs", "architecture_docs.md", DOCS_PANEL, agent_tools.docs_tools(clone), **kwargs)

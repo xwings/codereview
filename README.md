@@ -68,11 +68,16 @@ branch pins; there is no default project or branch.
 3. Fetch the latest [eatmycode](https://github.com/xwings/eatmycode) specification
    and read its `metadata.version`. Check the final source's `ARCHITECTURE.md`
    and every Markdown file recursively under `ARCHITECTURE/`. If all versions
-   match and every file is at most 35,000 characters, proceed. Missing docs,
-   absent/invalid/older stamps or oversized files run the documentation panel
-   with the fetched skill in a separate local guide worktree.
-4. Read the source architecture, prepared guide when needed, related module
-   docs and full source. For a PR: lead review → optional focused consultation
+   match and layout, sizes and navigation pass, proceed. The eatmycode 2.0
+   layout separates a small root (6,000 characters), mandatory Agent Rules
+   (12,000), modules (8,000), conditional topics (6,000) and indexes (4,000).
+   Missing, stale, malformed or oversized docs run preparation in a separate
+   local guide worktree. Legacy pages migrate with their useful guidance retained.
+4. Reuse the root and Agent Rules supplied once in the review topic. Match PR
+   paths or issue symptoms to Task Index routes, then read only affected owners,
+   triggered topics and full relevant source. Follow partner docs only when a
+   boundary is affected; broad changes proceed in owner batches.
+   For a PR: lead review → optional focused consultation
    → independent verification. For an issue: investigate → verify if needed.
 5. Validate and print one report identifying the selected branch and reviewed
    revisions. Unless `--dry-run` is set, post it as a PR review or issue comment.
@@ -126,7 +131,7 @@ GitHub. Generated guide edits are excluded from citations.
 | --- | --- |
 | `--id number` | Identify a PR or issue automatically. |
 | `--branch name` | Required remote branch for issue analysis and the local PR merge. |
-| `--dry-run` | Print the report without posting; documentation uses the same architecture version-and-size gate. |
+| `--dry-run` | Print the report without posting; documentation uses the same architecture freshness and layout gate. |
 | `--allow-approve` | Permit a real GitHub approval after all approval gates pass. Otherwise post a comment. |
 | `--verbose` | Add the full panel discussion to the default progress output on stderr. |
 | `--transcript path.txt` | Save the discussion; a documentation panel uses a sibling `*-pr-N-docs` or `*-issue-N-docs` file. |
@@ -184,8 +189,12 @@ UTF-8 serialization, not HTTP headers or exact wire size. The token estimate is
 not a model tokenizer and may undercount code or non-English text. Numeric input
 token usage returned by the provider is logged separately after its response.
 These counts do not establish a model's context limit or prove a timeout's cause.
-The complete root guide is already in the topic; reviewers are instructed to
-reuse that copy and read relevant module documents and source through tools.
+The root and mandatory Agent Rules are already in the topic. Reviewers reuse
+those copies and select modules through Task Index paths and reading triggers.
+Module bodies and a flattened full-set file inventory are not added to the topic.
+Documentation preparation uses a paged metadata tool to locate stale pages before
+reading their bodies. This reduces architecture context; it does not establish
+a measured wall-clock speedup for live model reviews.
 
 An HTTP response is distinct from a completed review turn. Empty replies and
 decoding failures are checked inside kerness; their retries appear on the next
@@ -224,10 +233,12 @@ coding documentation set.
 
 Model calls can be substantial: a PR includes at most one documentation panel
 plus two to four review stages and any format-correction turns. A current doc
-set within the size limit skips the documentation panel, worktree creation and
-guidance migration. This gate
-checks versions and sizes; it does not certify content, links or complete
-subsystem coverage. The PR/issue panel still inspects full relevant source.
+set passing mechanical validation skips the documentation panel, worktree
+creation and guidance migration. This gate checks versions, per-kind sizes,
+layout, exact rules/sections, links and navigation. It does not certify semantic
+freshness, source citations or complete subsystem coverage. The PR/issue panel
+still inspects full relevant source. Root Task Index has at most eight routes;
+index pages have at most twelve, with no navigation cycles.
 `tests/test_architecture.py` uses synthetic versions for offline regression
 coverage; it is never executed as part of a review.
 

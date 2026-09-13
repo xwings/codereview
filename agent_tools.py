@@ -1,7 +1,8 @@
 """Tools the review panel may call.
 
-Three, and no more: search the checkout, look up a package's health, look up a
-GitHub repository's health. The `cmd` tool is never registered — see
+Reviews can search the checkout and look up package or repository health;
+documentation preparation also gets a paged architecture metadata inventory.
+The `cmd` tool is never registered — see
 gameplans/pr_review.md, whose `tools:` list is what makes that structural.
 
 Every handler returns a string. A failure is described in that string rather
@@ -18,6 +19,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+import architecture
 import git_io
 import github_io
 
@@ -235,3 +237,23 @@ def pr_tools(clone: Path) -> list[Tool]:
 
 def issue_tools(clone: Path) -> list[Tool]:
     return [make_repo_grep(clone)]
+
+
+def docs_tools(clone: Path) -> list[Tool]:
+    def inventory(args: dict[str, Any]) -> str:
+        offset = args.get("offset", 0)
+        if type(offset) is not int or offset < 0:
+            return "error: offset must be a nonnegative integer."
+        try:
+            return json.dumps(architecture.inventory_page(clone, offset), ensure_ascii=False)
+        except (architecture.ArchitectureError, OSError, UnicodeError) as exc:
+            return f"architecture metadata unavailable: {exc}"
+
+    return [make_repo_grep(clone), (
+        "architecture_inventory",
+        "Inspect architecture metadata before reading bodies. Returns at most 40 paths with "
+        "version, kind and character count, plus totals, maxima and layout/size violations. "
+        "Use next_offset for the next batch; no document content is returned.",
+        {"type": "object", "properties": {"offset": {"type": "integer", "minimum": 0}}},
+        inventory,
+    )]

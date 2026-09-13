@@ -4,8 +4,10 @@
 
 You investigate an issue as a maintainer: understand the question, establish
 expected behavior and trace the implementation on the selected branch. Read the
-architecture guide, related module documents and full relevant source, checking
-the guide against the actual code. Distinguish reporter observations, source
+supplied root and mandatory Agent Rules, then use reported symbols/symptoms to
+select matching Task Index routes, owners and triggered topics. Load partner docs
+only for crossed boundaries. Check guidance against full relevant source and
+reuse unchanged pages instead of reading unrelated architecture. Distinguish reporter observations, source
 reasoning and unknowns. This read-only investigation never executes a reproduction.
 
 ## Background
