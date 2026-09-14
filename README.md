@@ -145,8 +145,8 @@ The API key and model also accept `--api-key` and `--llm-model`. Credentials
 are not written into session files. See `./code.sh --help` for all options.
 
 Failed model requests, including timeouts, retry up to twice after the initial
-attempt, with a fixed 30-second pause before each retry. At the default
-180-second HTTP timeout, one exhausted retry sequence can take ten minutes.
+attempt, with a fixed 3-second pause before each retry. At the default
+180-second HTTP timeout, one exhausted retry sequence can take nine minutes and six seconds.
 Provider compatibility fallbacks can start another sequence. A persistent
 HTTP 400 can indicate a rejected request that waiting will not resolve.
 Retries preserve completed review turns and apply to PR, issue and documentation
@@ -157,6 +157,22 @@ checked. An exhausted budget or failed request stops the review without posting;
 a result returned after expiry is not accepted. There is no deadline for the
 entire CLI workflow, including source preparation.
 
+Panel failures include the last model, agent, phase, request and HTTP attempt,
+with its safe error category or response status and configured `--timeout`.
+Budget failures also show actual elapsed time and the `--panel-timeout` limit,
+including when expiry prevents a scheduled retry from sending. Increase
+`--panel-timeout` to allow a longer review; `--timeout` limits each HTTP attempt.
+A timeout means the request did not finish within that limit; it does not
+establish why the provider was slow or whether its context limit was reached.
+
+For HTTP 400, 413 or 422, recognized provider errors now include guidance for
+context/input limits, output-token limits, tool/reasoning messages or unsupported
+parameters. This uses the error response, not the prompt-size estimate. Raw
+response bodies remain private. Unknown rejections direct you to the gateway's
+request/error logs; changing timeout limits will not fix a rejected request.
+After changing provider settings, rerun with `--dry-run` to verify the review
+completes before posting.
+
 Ctrl+C terminates the CLI immediately, including during native HTTP calls and
 retry waits. Existing local review sources and partial transcripts are retained.
 
@@ -166,8 +182,8 @@ completed turns and final validation. For example:
 
 ```text
 [2026-09-07 15:30:00] [deepseek-v4-flash] [Lead] [review] waiting for model response (request 1, attempt 1/3 (initial))...
-[2026-09-07 15:33:00] [deepseek-v4-flash] [Lead] [review] request 1: retry 1/2 in 30s...
-[2026-09-07 15:33:30] [deepseek-v4-flash] [Lead] [review] waiting for model response (request 1, attempt 2/3 (retry 1/2))...
+[2026-09-07 15:33:00] [deepseek-v4-flash] [Lead] [review] request 1: retry 1/2 in 3s...
+[2026-09-07 15:33:03] [deepseek-v4-flash] [Lead] [review] waiting for model response (request 1, attempt 2/3 (retry 1/2))...
 [2026-09-07 15:34:00] [deepseek-v4-flash] [Verifier] [verify] inspecting evidence...
 ```
 

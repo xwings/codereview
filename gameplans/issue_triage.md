@@ -9,6 +9,7 @@ agents:
     min: 2
     max: 2
 loop:
+  max_concurrent_agents: 3
   max_turns: 4
   max_rounds: 2
   verdict_rethink: false

@@ -15,7 +15,9 @@ import kerness.provider
 from progress import emit
 
 RETRIES = 2
-RETRY_INTERVAL_SECONDS = 30
+RETRY_INTERVAL_SECONDS = 3
+# Classification is best effort; never parse or echo an unbounded error page.
+MAX_ERROR_CHARS = 16_384
 _PANEL = ContextVar("provider_panel", default=None)
 _REQUEST = ContextVar("provider_request", default=None)
 _TRANSPORT_LOCK = threading.RLock()
@@ -45,6 +47,37 @@ def _prompt_size(payload: dict) -> str:
     )
 
 
+def _rejection_hint(error: kerness.ProviderHTTPError) -> str:
+    """Translate recognized refusals to fixed text without exposing their body."""
+    if error.status_code not in (400, 413, 422):
+        return ""
+    unknown = (
+        "unrecognized provider rejection; check the gateway's request/error logs for the exact reason. "
+        "Increasing timeout limits does not resolve a rejected request"
+    )
+    if len(error.body) > MAX_ERROR_CHARS:
+        return unknown
+    if error.is_context_overflow:
+        return (
+            "provider reports a context/input limit; reduce review input or use a model "
+            "with a larger context window"
+        )
+    body = error.body.lower()
+    invalid = any(word in body for word in ("exceed", "too large", "range", "must", "limit", "maximum"))
+    if invalid and any(name in body for name in ("max_tokens", "max_completion_tokens")):
+        return "provider reports an output token limit. Check the gateway's output-token settings"
+    invalid = any(word in body for word in ("missing", "must", "invalid", "expect", "preced", "follow", "without"))
+    if invalid and "reasoning_content" in body:
+        return "provider rejects reasoning-message format; check the gateway's reasoning-message compatibility"
+    if invalid and any(name in body for name in ("tool_call_id", "tool_calls", "tool response", "tool message")):
+        return "provider rejects tool-message format; check the gateway's tool-call compatibility"
+    if any(word in body for word in ("unsupported", "not supported", "does not support", "unknown", "unrecognized")):
+        for name in ("reasoning_effort", "tool_choice", "tools", "temperature", "top_p", "max_tokens", "max_completion_tokens"):
+            if name in body:
+                return f"provider rejects {name}; check the gateway's parameter compatibility"
+    return unknown
+
+
 class ProviderProgress:
     """Panel-local request IDs and trusted attribution, including compaction."""
 
@@ -55,12 +88,20 @@ class ProviderProgress:
         self.number = 0
         self.actor = summarizer
         self.phase = "prepare"
+        self.last_attempt = ""
 
     def started(self, actor: str, phase: str) -> None:
         self.number += 1
         self.actor, self.phase = actor, phase
+        self.last_attempt = ""
         self.update(f"waiting for model response (request {self.number})",
                     model=self.models[actor], agent=actor, phase=phase)
+
+    def failure_context(self) -> str:
+        if not self.number:
+            return ""
+        attempt = self.last_attempt or f"request {self.number}; no HTTP attempt observed"
+        return f"Last model request: [{self.models[self.actor]}] [{self.actor}] [{self.phase}] {attempt}."
 
 
 @contextmanager
@@ -100,6 +141,7 @@ class _Request:
     def post(self, transport, url, payload, headers=None, *, timeout):
         self.attempt += 1
         label = self.label()
+        self.panel.last_attempt = f"{label}: awaiting HTTP response (--timeout={timeout:g}s)"
         self.write(self.panel.update, f"waiting for model response ({label})")
         self.write(emit, f"{label}: {_prompt_size(payload)}")
         started = time.monotonic()
@@ -107,11 +149,17 @@ class _Request:
             response = transport(url, payload, headers, timeout=timeout)
         except Exception as exc:
             detail = "transport error"
+            hint = ""
             if isinstance(exc, kerness.ProviderHTTPError):
                 detail = f"HTTP {int(exc.status_code)}"
+                hint = _rejection_hint(exc)
             elif isinstance(exc, kerness.ProviderNetworkError):
                 detail = "request timed out" if "timed out" in str(exc.cause).lower() else "network error"
-            self.write(emit, f"{label}: {detail} after {time.monotonic() - started:.1f}s")
+            self.panel.last_attempt = (
+                f"{label}: {detail} after {time.monotonic() - started:.1f}s (--timeout={timeout:g}s)"
+                + (f"; {hint}" if hint else "")
+            )
+            self.write(emit, self.panel.last_attempt)
             if self.attempt <= RETRIES:
                 self.write(self.panel.update,
                     f"request {self.number}: retry {self.attempt}/{RETRIES} in {RETRY_INTERVAL_SECONDS}s",
@@ -120,7 +168,10 @@ class _Request:
         usage = (response.get("usage") or {}) if isinstance(response, dict) else {}
         tokens = usage.get("prompt_tokens", usage.get("input_tokens")) if isinstance(usage, dict) else None
         reported = f"; provider input tokens={tokens}" if type(tokens) is int and tokens >= 0 else ""
-        self.write(emit, f"{label}: HTTP response received in {time.monotonic() - started:.1f}s{reported}")
+        self.panel.last_attempt = (
+            f"{label}: HTTP response received in {time.monotonic() - started:.1f}s (--timeout={timeout:g}s)"
+        )
+        self.write(emit, self.panel.last_attempt + reported)
         return response
 
 

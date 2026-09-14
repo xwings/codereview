@@ -361,15 +361,28 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None,
             else:
                 fields, assessments = _review_steps(run, kind, clone, committed, update)
                 step = _drain(run, run.step({"kind": "finish", "result": fields}))
-        except kerness.SessionError as exc:
-            raise PanelError(f"{label} could not complete: {exc}") from exc
-        if time.monotonic() - started >= timeout_s:
-            raise PanelError(PANEL_TIMEOUT_MESSAGE)
-        if step["status"] != "finished":
-            raise PanelError("The read-only panel unexpectedly requested external input.")
-        outcome = step["outcome"]
-        if outcome["reason"]["kind"] != "completed" or not outcome["diagnostics"]["valid"]:
-            raise PanelError(f"Panel ended with {_failure(outcome)}.")
+            if time.monotonic() - started >= timeout_s:
+                raise PanelError(PANEL_TIMEOUT_MESSAGE)
+            if step["status"] != "finished":
+                raise PanelError("The read-only panel unexpectedly requested external input.")
+            outcome = step["outcome"]
+            if outcome["reason"]["kind"] != "completed" or not outcome["diagnostics"]["valid"]:
+                raise PanelError(f"Panel ended with {_failure(outcome)}.")
+        except (kerness.SessionError, PanelError) as exc:
+            elapsed = time.monotonic() - started
+            exhausted = elapsed >= timeout_s or PANEL_TIMEOUT_MESSAGE in str(exc)
+            reason = (
+                f"{PANEL_TIMEOUT_MESSAGE}. {elapsed:.1f}s elapsed; {timeout_s:g}s budget "
+                "shared across agents, tools, HTTP attempts and retry waits."
+                if exhausted else str(exc)
+            )
+            context = provider_progress.failure_context()
+            hint = (
+                " Increase --panel-timeout to allow more total review time; "
+                "--timeout controls each HTTP attempt's limit."
+                if exhausted else ""
+            )
+            raise PanelError(f"{label} could not complete: {reason} {context}{hint}".rstrip()) from exc
         raw = outcome["result"]
         if kind != "docs":
             recorded = [

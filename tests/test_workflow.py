@@ -280,7 +280,10 @@ class WorkflowTests(unittest.TestCase):
         errors = [
             (kerness.ProviderNetworkError("PRIVATE_URL", TimeoutError("PRIVATE_CAUSE: timed out")),
              "ProviderNetwork: request timed out"),
-            (kerness.ProviderHTTPError(400, "PRIVATE_URL", "PRIVATE_BODY"), "ProviderHttp HTTP 400"),
+            (kerness.ProviderHTTPError(400, "PRIVATE_URL", json.dumps({"error": {
+                "code": "invalid_parameter", "param": "max_tokens",
+                "message": "max_tokens exceeds the output limit PRIVATE_BODY PRIVATE_KEY",
+            }})), "ProviderHttp HTTP 400"),
             ({"choices": [{"message": {"content": ""}}]}, "ProviderEmpty"),
         ]
         scenarios = [(0, None, "")] + [(count, failure, diagnostic)
@@ -305,12 +308,23 @@ class WorkflowTests(unittest.TestCase):
                     post = stack.enter_context(patch("kerness.provider.http_post_json",
                         side_effect=[responses[0], *([failure] * failures), *responses[1:]]))
                     provider = session_builder.build_provider("PRIVATE_KEY", "https://example.invalid", 7)
-                    self.assertEqual(factory.call_args.kwargs.get("interval_sec"), 30)
+                    self.assertEqual(factory.call_args.kwargs.get("interval_sec"), 3)
                     session = builder(topic="Inspect this checkout.", clone=self.clone, provider=provider,
                                       model="offline-fixture", transcript=None, max_turns=None)
                     if failures == 3:
                         with self.assertRaisesRegex(panel_runtime.PanelError, diagnostic) as error:
                             panel_runtime.run_session(session, kind, clone=self.clone)
+                        message = str(error.exception)
+                        actor = {"pr": "Verifier", "issue": "Verifier", "docs": "DocsPlanner"}[kind]
+                        phase = "plan" if kind == "docs" else "verify"
+                        self.assertIn(f"[offline-fixture] [{actor}] [{phase}]", message)
+                        self.assertIn("request 2, attempt 3/3 (retry 2/2)", message)
+                        self.assertIn("--timeout=7s", message)
+                        self.assertIn("HTTP response received" if isinstance(failure, dict)
+                                      else "request timed out" if "Network" in diagnostic else "HTTP 400", message)
+                        if isinstance(failure, kerness.ProviderHTTPError):
+                            self.assertIn("output token limit", message)
+                            self.assertIn("Check the gateway's output-token settings", message)
                         self.assertEqual(post.call_count, 4)
                         self.assertNotIn("Done:", err.getvalue())
                         for private in ("PRIVATE_URL", "PRIVATE_CAUSE", "PRIVATE_BODY", "PRIVATE_KEY"):
@@ -332,8 +346,87 @@ class WorkflowTests(unittest.TestCase):
                         self.assertTrue(all(call == post.call_args_list[1] for call in post.call_args_list[1:4]))
                     self.assertIs(kerness.provider.http_post_json, post)
                     if failures and isinstance(failure, Exception):
-                        self.assertIn("retry 1/2 in 30s", err.getvalue())
-                        self.assertIn("retry 2/2 in 30s", err.getvalue())
+                        self.assertIn("retry 1/2 in 3s", err.getvalue())
+                        self.assertIn("retry 2/2 in 3s", err.getvalue())
+
+        # Provider refusals become fixed guidance, never echoed response text.
+        refusals = [
+            ('{"error":{"code":"context_length_exceeded","message":"PRIVATE_BODY"}}',
+             "context/input limit", "larger context window"),
+            ('{"code":"InvalidParameter","message":"Range of input length should be [1, 32768] PRIVATE_BODY"}',
+             "context/input limit", "larger context window"),
+            ('{"error":{"message":"max_completion_tokens is too large PRIVATE_BODY"}}',
+             "output token limit", "output-token settings"),
+            ('{"error":{"message":"Missing tool_call_id for tool response PRIVATE_BODY"}}',
+             "tool-message format", "tool-call compatibility"),
+            ('{"error":{"message":"Missing reasoning_content in assistant message PRIVATE_BODY"}}',
+             "reasoning-message format", "reasoning-message compatibility"),
+            ('{"error":{"message":"Unsupported parameter: reasoning_effort PRIVATE_BODY"}}',
+             "reasoning_effort", "parameter compatibility"),
+            ("PRIVATE_BODY: unsupported tools", "tools", "parameter compatibility"),
+            ("PRIVATE_BODY", "unrecognized provider rejection", "gateway's request/error logs"),
+            ('{"error":{"code":"PRIVATE_KEY","param":"PRIVATE_BODY","message":null}}',
+             "unrecognized provider rejection", "gateway's request/error logs"),
+            ('{"error": ["PRIVATE_BODY"]}', "unrecognized provider rejection", "gateway's request/error logs"),
+            ('{"error": "PRIVATE_BODY"', "unrecognized provider rejection", "gateway's request/error logs"),
+            ("PRIVATE_BODY" * 10000, "unrecognized provider rejection", "gateway's request/error logs"),
+        ]
+        for body, reason, remedy in refusals:
+            failure = kerness.ProviderHTTPError(400, "PRIVATE_URL", body)
+            with self.subTest(rejection=reason, body=body[:80]), redirect_stderr(io.StringIO()) as err, \
+                    patch("kerness.provider.http_post_json", side_effect=failure) as post, \
+                    provider_io.observe_requests(lambda *a, **k: None, {"Lead": "offline-fixture"}, "Lead") as panel:
+                provider = custom_provider(url="https://example.invalid", api_key="PRIVATE_KEY",
+                                           timeout_sec=7, retries=0)
+                panel.started("Lead", "review")
+                with self.assertRaises(kerness.ProviderHTTPError):
+                    provider.chat_with_retries("offline-fixture", [{"role": "user", "content": "PRIVATE_PROMPT"}])
+                for output in (err.getvalue(), panel.failure_context()):
+                    self.assertIn(reason, output)
+                    self.assertIn(remedy, output)
+                    for private in ("PRIVATE_URL", "PRIVATE_BODY", "PRIVATE_KEY", "PRIVATE_PROMPT"):
+                        self.assertNotIn(private, output)
+                self.assertGreaterEqual(post.call_count, 1)
+                self.assertIs(kerness.provider.http_post_json, post)
+
+        # A timeout during a tool followup can exhaust the panel before the next POST.
+        for kind, fields, builder, _ in cases:
+            clock = [100.0]
+            tool_reply = {"choices": [{"message": {"content":
+                '```tool_calls\n[{"name":"read_file","arguments":{"path":"app.py"}}]\n```'}}]}
+            observed = []
+
+            def timeout_after_read(url, payload, headers, *, timeout):
+                observed.append(payload)
+                if len(observed) == 1:
+                    return tool_reply
+                clock[0] += 0.2
+                time.sleep(0.2)  # Cross the native engine's separate monotonic deadline.
+                raise kerness.ProviderNetworkError("PRIVATE_URL", TimeoutError("PRIVATE_CAUSE: timed out"))
+
+            with self.subTest(retry_budget=kind), redirect_stderr(io.StringIO()) as err, \
+                    redirect_stdout(io.StringIO()) as out, \
+                    patch("kerness.provider.http_post_json", side_effect=timeout_after_read) as post, \
+                    patch("time.monotonic", side_effect=lambda: clock[0]):
+                provider = custom_provider(url="https://example.invalid", api_key="PRIVATE_KEY",
+                                           timeout_sec=7, retries=2, interval_sec=0, backoff_sec=0)
+                session = builder(topic="Inspect this checkout.", clone=self.clone, provider=provider,
+                                  model="offline-fixture", transcript=None, max_turns=None)
+                with self.assertRaises(panel_runtime.PanelError) as error:
+                    panel_runtime.run_session(session, kind, clone=self.clone, timeout_s=0.1)
+                message = str(error.exception)
+                self.assertIn("panel time budget exhausted", message)
+                self.assertIn("0.2s elapsed; 0.1s budget", message)
+                self.assertIn("request 2, attempt 1/3 (initial): request timed out after 0.2s", message)
+                self.assertIn("--timeout=7s", message)
+                self.assertIn("Increase --panel-timeout", message)
+                self.assertIn("inspecting evidence", err.getvalue())
+                self.assertEqual(post.call_count, 2)
+                self.assertEqual(out.getvalue(), "")
+                self.assertNotIn("Done:", err.getvalue())
+                for private in ("PRIVATE_URL", "PRIVATE_CAUSE", "PRIVATE_KEY", "https://example.invalid"):
+                    self.assertNotIn(private, message)
+                self.assertIs(kerness.provider.http_post_json, post)
 
         # Compatibility fallbacks keep the logical request and reset its retry sequence.
         for refusals in (("tools",), ("reasoning_effort",), ("tools", "reasoning_effort")):
@@ -441,11 +534,16 @@ class WorkflowTests(unittest.TestCase):
                 patch("kerness.provider.http_post_json", side_effect=transport) as post:
             models = {"Lead": "observed", "Chair": "summary", "Verifier": "observed"}
             with progress.activity("Panel") as update, provider_io.observe_requests(update, models, "Chair") as panel:
+                self.assertEqual(panel.failure_context(), "")
                 panel.started("Lead", "review")
                 observed.chat_with_retries("observed", messages)
+                self.assertIn("request 1, attempt 1/3 (initial): HTTP response received", panel.failure_context())
                 self.assertIs(kerness.provider.http_post_json, post)
                 observed.chat_with_retries("summary", messages, purpose="compaction")
+                self.assertIn("[summary] [Chair] [compact] request 2", panel.failure_context())
                 panel.started("Verifier", "verify")
+                self.assertIn("[observed] [Verifier] [verify] request 3; no HTTP attempt observed", panel.failure_context())
+                self.assertNotIn("HTTP response received", panel.failure_context())
                 observed.chat_with_retries("observed", messages)
                 self.assertEqual(panel.number, 3)
             self.assertFalse(failures)
@@ -546,8 +644,11 @@ class WorkflowTests(unittest.TestCase):
                 with self.subTest(elapsed=kind, replies=replies), redirect_stderr(io.StringIO()) as err, \
                         redirect_stdout(io.StringIO()) as out, \
                         patch.object(self.provider, "chat_with_retries", delayed_chat), \
-                        self.assertRaisesRegex(panel_runtime.PanelError, "panel time budget exhausted"):
+                        self.assertRaisesRegex(panel_runtime.PanelError, "panel time budget exhausted") as error:
                     panel_runtime.run_session(session, kind, clone=self.clone, timeout_s=0.1)
+                self.assertRegex(str(error.exception), r"\d+\.\ds elapsed; 0\.1s budget")
+                self.assertIn(f"request {len(replies)}", str(error.exception))
+                self.assertIn("no HTTP attempt observed", str(error.exception))
                 self.assertEqual(len(self.provider.calls), len(replies))
                 self.assertNotIn("inspecting evidence", err.getvalue())
                 self.assertNotIn("Done:", err.getvalue())

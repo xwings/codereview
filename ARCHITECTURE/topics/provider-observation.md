@@ -11,8 +11,8 @@ accounting, panel budgets, stderr measurements, progress or interruption behavio
 ## Contract
 
 `session_builder.build_provider` supplies two retries after the initial attempt,
-with fixed 30-second pauses through kerness `interval_sec`. A sequence allows
-three attempts and one minute of pauses plus HTTP time. Retries resend pending
+with fixed 3-second pauses through kerness `interval_sec`. A sequence allows
+three attempts and six seconds of pauses plus HTTP time. Retries resend pending
 requests without restarting completed turns. `--timeout` applies per attempt;
 native compatibility fallback may begin another sequence. Waiting cannot resolve
 a persistently incompatible request (`RETRIES`, `RETRY_INTERVAL_SECONDS`).
@@ -48,6 +48,19 @@ late closing responses too and rejects publication with an elapsed-budget
 diagnostic. There is no separate whole-CLI deadline or provider-request count
 guarantee. Tool replies cannot reset the clock.
 
+Execution failures retain the last observed request's model/actor/phase,
+attempt/fallback label, safe HTTP outcome and configured `--timeout`; new
+logical requests clear prior attempt detail (`ProviderProgress.failure_context`).
+`run_session` normalizes elapsed expiry across failed steps, session exceptions
+and late results, including native errors wrapped as provider failures. It shows
+actual elapsed/configured budget and distinguishes `--panel-timeout` from the
+per-attempt limit. An unsent retry retains the preceding attempt's failure;
+providers without POST observation report that no HTTP attempt was observed.
+`_rejection_hint` maps HTTP 400/413/422 bodies of at most 16,384 characters to
+fixed guidance, reusing kerness's context classifier. Heuristic matches never
+change recovery; unknown/oversized bodies direct users to gateway logs. No body
+text or arbitrary field values are emitted.
+
 Engine events identify logical waits, evidence inspection and committed turns;
 POST observation distinguishes actual sends/retries/fallbacks. Docs phase labels
 follow the required specialist rotation; final-summary purpose uses `summary`.
@@ -67,18 +80,19 @@ attempt. Avoid inferring latency causes from prompt sizes alone.
 
 Run the [root checks](../../ARCHITECTURE.md#verification). Provider cases in
 `tests/test_workflow.py` use real providers/engine with mocked transport: they
-assert the 30-second policy then remove waits in fixtures, recover on retry two,
+assert the 3-second policy then remove waits in fixtures, recover on retry two,
 preserve completed turns, stop after three failures and retain each timeout.
 They cover empty replies and compatibility fallbacks, Unicode/schema/file-read
 payload measurements, usage handling, compaction, unrelated threads, hook
-restoration and output failure without replay. Elapsed-budget cases reject late
-responses/pending tools for all panels. Local HTTP subprocess cases verify SIGINT
+restoration, bounded refusal guidance/redaction and output failure without replay. Elapsed-budget cases reject late
+responses/pending tools and retain timed-out tool-followup details when expiry
+prevents a retry for all panels. Local HTTP subprocess cases verify SIGINT
 during native calls and retry sleep. Expect `OK` and exit 0; no external provider
 or GitHub write is exercised.
 
 ## Evidence and Gaps
 
-`progress.activity` schedules at 15 seconds, but native 30-second retry sleeps
+`progress.activity` schedules at 15 seconds, but native 3-second retry sleeps
 can delay Python heartbeat delivery. Synchronous observation measures completed
 HTTP attempts, not token progress. Host cooperative budgets cannot forcibly
 cancel in-flight native work. These limits are documented behavior, not evidence
