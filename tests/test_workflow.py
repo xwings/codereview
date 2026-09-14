@@ -319,7 +319,7 @@ class WorkflowTests(unittest.TestCase):
                         phase = "plan" if kind == "docs" else "verify"
                         self.assertIn(f"[offline-fixture] [{actor}] [{phase}]", message)
                         self.assertIn("request 2, attempt 3/3 (retry 2/2)", message)
-                        self.assertIn("--timeout=7s", message)
+                        self.assertIn("--api-timeout=7s", message)
                         self.assertIn("HTTP response received" if isinstance(failure, dict)
                                       else "request timed out" if "Network" in diagnostic else "HTTP 400", message)
                         if isinstance(failure, kerness.ProviderHTTPError):
@@ -418,7 +418,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertIn("panel time budget exhausted", message)
                 self.assertIn("0.2s elapsed; 0.1s budget", message)
                 self.assertIn("request 2, attempt 1/3 (initial): request timed out after 0.2s", message)
-                self.assertIn("--timeout=7s", message)
+                self.assertIn("--api-timeout=7s", message)
                 self.assertIn("Increase --panel-timeout", message)
                 self.assertIn("inspecting evidence", err.getvalue())
                 self.assertEqual(post.call_count, 2)
@@ -1180,7 +1180,7 @@ review.cli()
             for current_root in (False, True):
                 events = []
                 args = SimpleNamespace(repo="a/b", prompts=None, kind="auto", number=1, api_key="fake",
-                                       api_base="https://example.invalid", timeout=1, workdir=self.clone,
+                                       api_base="https://example.invalid", api_timeout=1, workdir=self.clone,
                                        branch="release/selected", llm_model="fixture", transcript=None,
                                        max_turns=None, verbose=False, allow_approve=False, panel_timeout=123)
                 (source / "ARCHITECTURE.md").write_text(
@@ -1217,7 +1217,7 @@ review.cli()
                     stack.enter_context(patch.object(git_io, "prepare_source", side_effect=prepare_source))
                     stack.enter_context(patch.object(review.architecture, "sync_skill", side_effect=lambda *a:
                         events.append("skill") or skill))
-                    stack.enter_context(patch.object(session_builder, "build_provider"))
+                    provider_factory = stack.enter_context(patch.object(session_builder, "build_provider"))
                     gate = stack.enter_context(patch.object(review, "prepare_docs", side_effect=prepare_docs))
                     preparation = stack.enter_context(patch.object(review.architecture, "prepare"))
                     docs_builder = stack.enter_context(patch.object(session_builder, "build_docs_session"))
@@ -1233,6 +1233,7 @@ review.cli()
                     finish = stack.enter_context(patch.object(review, "finish",
                                                              side_effect=lambda *a, **k: events.append("answer") or 0))
                     self.assertEqual(review.main(), 0)
+                    provider_factory.assert_called_once_with(args.api_key, args.api_base, args.api_timeout)
                     self.assertEqual(events, ["kind", *(["pr"] if kind == "pr" else []), "source", "skill",
                                               "docs", "panel", *(["pr"] if kind == "pr" else []), "answer"])
                     gate.assert_called_once()
@@ -1381,22 +1382,27 @@ review.cli()
                 self.assertEqual(args.branch, "release/selected")
                 self.assertFalse(args.verbose)
                 self.assertIsNone(args.transcript)
-                self.assertEqual(args.panel_timeout, 900)
-        with patch("sys.argv", ["review.py", "--id", "42", *options, "--panel-timeout", "120"]):
-            self.assertEqual(review.parse_args().panel_timeout, 120)
-        for value in ("0", "-1", "invalid"):
-            with self.subTest(panel_timeout=value), \
-                    patch("sys.argv", ["review.py", "--id", "42", *options, "--panel-timeout", value]), \
-                    redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
-                review.parse_args()
-            self.assertEqual(error.exception.code, 2)
+                self.assertEqual((args.api_timeout, args.panel_timeout), (3600, 3600))
+        for timeouts, expected in ((["--api-timeout", "60"], (60, 3600)),
+                                   (["--panel-timeout", "120"], (3600, 120)),
+                                   (["--api-timeout", "60", "--panel-timeout", "120"], (60, 120))):
+            with self.subTest(timeouts=timeouts), patch("sys.argv", ["review.py", "--id", "42", *options, *timeouts]):
+                args = review.parse_args()
+                self.assertEqual((args.api_timeout, args.panel_timeout), expected)
+        for flag in ("--api-timeout", "--panel-timeout"):
+            for value in ("0", "-1", "invalid"):
+                with self.subTest(flag=flag, value=value), \
+                        patch("sys.argv", ["review.py", "--id", "42", *options, flag, value]), \
+                        redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                    review.parse_args()
+                self.assertEqual(error.exception.code, 2)
         forwarded = ["--id", "42", "--repo", "old/project", "--dry-run",
                      "--api-base", "https://server", *options, "--dry-run"]
         with patch("sys.argv", ["review.py", *forwarded]):
             args = review.parse_args()
             self.assertEqual((args.repo, args.api_base, args.dry_run), ("a/b", "https://server", True))
         for selector in ([], ["--id", "0"], ["--id", "-1"], ["--id", "xxx"], ["--id"],
-                         ["pr"], ["pr", "42", "--id", "42"]):
+                         ["pr"], ["pr", "42", "--id", "42"], ["--id", "42", "--timeout", "60"]):
             with self.subTest(selector=selector), patch("sys.argv", ["review.py", *selector, *options]):
                 with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
                     review.parse_args()

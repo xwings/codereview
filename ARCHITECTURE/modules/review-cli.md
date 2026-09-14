@@ -72,8 +72,9 @@ excludes credentials, endpoint URLs, raw bodies and tool arguments. Read
 [provider observation](../topics/provider-observation.md) when changing request
 counts, retry labels, elapsed accounting or telemetry boundaries.
 
-`--panel-timeout` defaults to a cooperative 900-second budget for each panel;
-`--timeout` is the per-attempt HTTP limit. Active calls/retry waits can overrun
+`--panel-timeout` defaults to a cooperative 3600-second budget for each panel;
+`--api-timeout` is the per-attempt HTTP limit and also defaults to 3600 seconds.
+Explicit flag values override these defaults. Active calls/retry waits can overrun
 the budget; late results are rejected. `cli` temporarily uses OS-default SIGINT
 so Ctrl+C terminates blocked native calls immediately. Imported library callers
 retain their signal handling. OS termination bypasses Python cleanup; existing
@@ -106,8 +107,8 @@ reports agree with verbosity off/on, including result-format correction and
 multiline/fenced JSON. Heartbeat tests cover context updates and cleanup on
 success/error/interruption. Local HTTP subprocess tests prove SIGINT during
 native requests/retry waits; late-response tests prove elapsed-budget rejection.
-Help must list `--branch`, `--id`, `--verbose`, `--dry-run`, `--panel-timeout`
-and `--allow-approve`. No external model call or GitHub write is exercised.
+Help must list `--branch`, `--id`, `--verbose`, `--dry-run`, `--api-timeout`,
+`--panel-timeout` and `--allow-approve`. No external model call or GitHub write is exercised.
 
 ## Known Gaps
 

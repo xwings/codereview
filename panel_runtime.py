@@ -379,7 +379,7 @@ def run_session(session: kerness.Session, kind: str, clone: Path | None = None,
             context = provider_progress.failure_context()
             hint = (
                 " Increase --panel-timeout to allow more total review time; "
-                "--timeout controls each HTTP attempt's limit."
+                "--api-timeout controls each HTTP attempt's limit."
                 if exhausted else ""
             )
             raise PanelError(f"{label} could not complete: {reason} {context}{hint}".rstrip()) from exc

@@ -137,31 +137,33 @@ GitHub. Generated guide edits are excluded from citations.
 | `--transcript path.txt` | Save the discussion; a documentation panel uses a sibling `*-pr-N-docs` or `*-issue-N-docs` file. |
 | `--workdir path` | Store managed clones, isolated sources and guide worktrees here; defaults to this tool's `repo/`. |
 | `--prompts path` | Supply a custom supplementary repository profile. |
-| `--timeout seconds` | Timeout for each HTTP attempt; defaults to 180. |
-| `--panel-timeout seconds` | Elapsed budget for each PR, issue or documentation panel; defaults to 900. Checked between actions. |
+| `--api-timeout seconds` | Timeout for each HTTP attempt; defaults to 3600. |
+| `--panel-timeout seconds` | Elapsed budget for each PR, issue or documentation panel; defaults to 3600. Checked between actions. |
 | `--max-turns n` | Override each panel's turn budget. An incomplete panel cannot publish. |
 
+Use `--api-timeout` in place of the former `--timeout` option.
 The API key and model also accept `--api-key` and `--llm-model`. Credentials
 are not written into session files. See `./code.sh --help` for all options.
 
 Failed model requests, including timeouts, retry up to twice after the initial
-attempt, with a fixed 3-second pause before each retry. At the default
-180-second HTTP timeout, one exhausted retry sequence can take nine minutes and six seconds.
+attempt, with a fixed 3-second pause before each retry. Each HTTP attempt
+defaults to a 3600-second (one-hour) timeout.
 Provider compatibility fallbacks can start another sequence. A persistent
 HTTP 400 can indicate a rejected request that waiting will not resolve.
 Retries preserve completed review turns and apply to PR, issue and documentation
-panels. `--panel-timeout` gives each panel a shared 15-minute budget for all its
-agents, tool followups, retries and fallbacks. This is cooperative: an in-flight
-HTTP attempt and remaining retry pauses can overrun the budget before it is
+panels. `--panel-timeout` gives each panel a shared one-hour budget by default
+for all its agents, tool followups, retries and fallbacks. Both timeout flags
+accept explicit values in seconds to override their defaults. This is cooperative:
+an in-flight HTTP attempt and remaining retry pauses can overrun the budget before it is
 checked. An exhausted budget or failed request stops the review without posting;
 a result returned after expiry is not accepted. There is no deadline for the
 entire CLI workflow, including source preparation.
 
 Panel failures include the last model, agent, phase, request and HTTP attempt,
-with its safe error category or response status and configured `--timeout`.
+with its safe error category or response status and configured `--api-timeout`.
 Budget failures also show actual elapsed time and the `--panel-timeout` limit,
 including when expiry prevents a scheduled retry from sending. Increase
-`--panel-timeout` to allow a longer review; `--timeout` limits each HTTP attempt.
+`--panel-timeout` to allow a longer review; `--api-timeout` limits each HTTP attempt.
 A timeout means the request did not finish within that limit; it does not
 establish why the provider was slow or whether its context limit was reached.
 

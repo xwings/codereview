@@ -141,7 +141,7 @@ class _Request:
     def post(self, transport, url, payload, headers=None, *, timeout):
         self.attempt += 1
         label = self.label()
-        self.panel.last_attempt = f"{label}: awaiting HTTP response (--timeout={timeout:g}s)"
+        self.panel.last_attempt = f"{label}: awaiting HTTP response (--api-timeout={timeout:g}s)"
         self.write(self.panel.update, f"waiting for model response ({label})")
         self.write(emit, f"{label}: {_prompt_size(payload)}")
         started = time.monotonic()
@@ -156,7 +156,7 @@ class _Request:
             elif isinstance(exc, kerness.ProviderNetworkError):
                 detail = "request timed out" if "timed out" in str(exc.cause).lower() else "network error"
             self.panel.last_attempt = (
-                f"{label}: {detail} after {time.monotonic() - started:.1f}s (--timeout={timeout:g}s)"
+                f"{label}: {detail} after {time.monotonic() - started:.1f}s (--api-timeout={timeout:g}s)"
                 + (f"; {hint}" if hint else "")
             )
             self.write(emit, self.panel.last_attempt)
@@ -169,7 +169,7 @@ class _Request:
         tokens = usage.get("prompt_tokens", usage.get("input_tokens")) if isinstance(usage, dict) else None
         reported = f"; provider input tokens={tokens}" if type(tokens) is int and tokens >= 0 else ""
         self.panel.last_attempt = (
-            f"{label}: HTTP response received in {time.monotonic() - started:.1f}s (--timeout={timeout:g}s)"
+            f"{label}: HTTP response received in {time.monotonic() - started:.1f}s (--api-timeout={timeout:g}s)"
         )
         self.write(emit, self.panel.last_attempt + reported)
         return response

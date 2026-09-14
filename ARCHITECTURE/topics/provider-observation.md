@@ -13,7 +13,7 @@ accounting, panel budgets, stderr measurements, progress or interruption behavio
 `session_builder.build_provider` supplies two retries after the initial attempt,
 with fixed 3-second pauses through kerness `interval_sec`. A sequence allows
 three attempts and six seconds of pauses plus HTTP time. Retries resend pending
-requests without restarting completed turns. `--timeout` applies per attempt;
+requests without restarting completed turns. `--api-timeout` applies per attempt;
 native compatibility fallback may begin another sequence. Waiting cannot resolve
 a persistently incompatible request (`RETRIES`, `RETRY_INTERVAL_SECONDS`).
 
@@ -49,7 +49,7 @@ diagnostic. There is no separate whole-CLI deadline or provider-request count
 guarantee. Tool replies cannot reset the clock.
 
 Execution failures retain the last observed request's model/actor/phase,
-attempt/fallback label, safe HTTP outcome and configured `--timeout`; new
+attempt/fallback label, safe HTTP outcome and configured `--api-timeout`; new
 logical requests clear prior attempt detail (`ProviderProgress.failure_context`).
 `run_session` normalizes elapsed expiry across failed steps, session exceptions
 and late results, including native errors wrapped as provider failures. It shows

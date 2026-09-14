@@ -118,12 +118,12 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--workdir", type=Path, default=DEFAULT_WORKDIR)
     ap.add_argument(
-        "--timeout", type=int, default=180,
-        help="per-request HTTP timeout in seconds (default: 180)",
+        "--api-timeout", type=int, default=3600,
+        help="per-request HTTP timeout in seconds (default: 3600)",
     )
     ap.add_argument(
-        "--panel-timeout", type=int, default=900,
-        help="elapsed budget per panel, including retries and tools; checked between actions (default: 900 seconds)",
+        "--panel-timeout", type=int, default=3600,
+        help="elapsed budget per panel, including retries and tools; checked between actions (default: 3600 seconds)",
     )
     ap.add_argument(
         "--max-turns", type=int, default=None,
@@ -145,8 +145,8 @@ def parse_args() -> argparse.Namespace:
         ap.error("--api-key is required (or set $REVIEW_API_KEY)")
     if not args.llm_model:
         ap.error("--llm-model is required (or set $REVIEW_MODEL)")
-    if args.number < 1 or args.timeout < 1 or args.panel_timeout < 1 or (args.max_turns is not None and args.max_turns < 1):
-        ap.error("number, timeout, panel-timeout and max-turns must be positive")
+    if args.number < 1 or args.api_timeout < 1 or args.panel_timeout < 1 or (args.max_turns is not None and args.max_turns < 1):
+        ap.error("number, api-timeout, panel-timeout and max-turns must be positive")
     args.repo = normalize_repo(args.repo)
     try:
         args.branch = git_io.validate_branch(args.branch)
@@ -465,7 +465,7 @@ def main() -> int:
     emit("3/5 Check architecture version and prepare only if needed", model=args.llm_model, phase="architecture")
     with activity("Fetching and verifying the latest eatmycode specification", model=args.llm_model, phase="architecture"):
         skill = architecture.sync_skill(ROOT / "vendor" / "eatmycode")
-    provider = session_builder.build_provider(args.api_key, args.api_base, args.timeout)
+    provider = session_builder.build_provider(args.api_key, args.api_base, args.api_timeout)
     workspace, docs = prepare_docs(args, provider, snapshot.path, skill, f"{args.kind}-{args.number}")
 
     emit(f"4/5 Run {actual_kind} review and required verification", model=args.llm_model, phase="prepare")
